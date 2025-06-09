@@ -1,0 +1,12 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: server
+spec:
+  selector:
+    app: server  # This should match the label in your deployment
+  ports:
+    - name: http
+      port: 8080        # The port exposed by the service
+      targetPort: 8080  # The port your server container listens on
+  type: ClusterIP  # This type exposes the service on a cluster-internal IP

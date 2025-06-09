@@ -1,0 +1,24 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: server-job
+spec:
+  template:
+    metadata:
+      labels:
+        app: server
+    spec:
+      containers:
+      - name: server
+        image: ccsaba99/server-image:latest  # Your server Docker image
+        ports:
+        - containerPort: 8080
+        volumeMounts:
+        - mountPath: "/app/logs"  # Path inside the container where the volume will be mounted
+          name: storage-volume
+      restartPolicy: Never  # Prevents restarts on completion
+      volumes:
+      - name: storage-volume
+        persistentVolumeClaim:
+          claimName: my-nfs-pvc  # Name of the PVC defined above
+  backoffLimit: 0  # Prevents retries if the Job fails
