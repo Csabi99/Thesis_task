@@ -16,19 +16,16 @@ RUN apt-get update && apt-get install -y \
 # Install any needed packages specified in requirements.txt
 RUN pip install -r requirements.txt
 
-# Copy the Carla dataset files into the container
 # COPY ./carla /app/carla
 # COPY ./films_dataset/120-180-posters /app/films/images
 # COPY ./films_dataset/genres/labels /app/films/labels
 
-# Copy your client script into the container
-COPY ./client.py /app/client.py
+# Copy your server script into the container
+COPY ./client_carla.py /app/client.py
+COPY ./server.py /app/server.py
 COPY ./config.yaml /app/config.yaml
+COPY ./strategies.py /app/strategies.py
 
-# Create an entrypoint script
-COPY ./entrypoint.sh /app/entrypoint.sh
-RUN chmod +x /app/entrypoint.sh
-
-# Specify the command to run the entrypoint script
-ENTRYPOINT ["/app/entrypoint.sh"]
+# Specify the command to run the server script
+ENTRYPOINT ["python", "server.py"]
 
