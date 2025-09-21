@@ -23,7 +23,7 @@ cd /home/ubuntu/data/ || exit
 
 # Copy the configuration file
 echo "Copying configuration file from ${path}/config.yaml to /home/ubuntu/tests/config.yaml..."
-cp "${path}/config.yaml" /home/ubuntu/tests/config.yaml
+cp "${path}/config.yaml" /home/ubuntu/data/config.yaml
 
 # Extract the clients value from config.yaml
 echo "Extracting the clients value from $config_file..."

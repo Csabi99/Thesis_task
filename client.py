@@ -12,17 +12,68 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torchvision.transforms as transforms
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, Dataset
+import os
+from torchvision.io import read_image
 from torch.utils.data import random_split
 import torchvision.transforms as transforms
 from torchvision.datasets import CIFAR10
+import random
 
 import flwr as fl
 import datetime
-  
 
-def transform(img):
-    return img.float() / 255.0
+class NuImageDataset(Dataset):
+    def __init__(self, img_dir, is_test: bool = False):
+        self.img_dir = img_dir
+        self.transform = transforms.Compose([
+            transforms.Resize(size=(80, 45)),  # Resize images to 80x45 pixels
+            transforms.RandomHorizontalFlip(p=0.5),  # Randomly flip images horizontally with a probability of 50%
+            transforms.RandomRotation(degrees=15),  # Randomly rotate images within ±15 degrees
+            transforms.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2, hue=0.1),  # Randomly adjust color properties
+            #transforms.ToTensor(),  # Convert PIL images to PyTorch tensors
+            transforms.ConvertImageDtype(torch.float32),  # <--- convert uint8 → float32 in [0,1]
+            transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))  # Normalize to [-1, 1]
+        ])
+        self.test_transform = transforms.Compose([
+            transforms.Resize(size=(80, 45)),  # Resize images to 80x45 pixels
+            #transforms.ToTensor(),  # Convert PIL images to PyTorch tensors
+            transforms.ConvertImageDtype(torch.float32),  # <--- convert uint8 → float32 in [0,1]
+            transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))  # Normalize to [-1, 1]
+        ])
+        self.test = is_test
+        self.images = [f for f in os.listdir(img_dir) if f.endswith('.jpg')]
+        self.images.sort()
+
+    def __len__(self):
+        return len(self.images)
+
+    def __getitem__(self, idx):
+        #img_path = os.path.join(self.img_dir, f'{self.img_labels.iloc[idx, 0]}.png')
+        img_path = os.path.join(self.img_dir, self.images[idx])
+        image = read_image(img_path)
+        # label = self.img_labels.iloc[idx, 1]
+        label  = random.randint(0, 9)  # Dummy label for illustration
+        if self.test:
+            image = self.test_transform(image)
+        else:
+            image = self.transform(image)
+        return image, label  
+    
+def load_nu(batch_size, i, n):
+    dataset = NuImageDataset(img_dir='/app/data', is_test=False)
+    test_dataset = NuImageDataset(img_dir='/app/data', is_test=True)
+    log(INFO, f"NuDataset")
+    # generator1 = torch.Generator().manual_seed(42)
+    # fractions = [1 / n for _ in range(n - 1)]  # First n-1 elements
+    # fractions.append(1 - sum(fractions))       # Adjust the last element
+    # tr_splits = random_split(dataset, fractions, generator=generator1)
+    # te_splits = random_split(test_dataset, fractions, generator=generator1)
+    # train_dataloader = DataLoader(tr_splits[i], batch_size=batch_size, shuffle=False)
+    # test_dataloader = DataLoader(te_splits[i], batch_size=batch_size, shuffle=False)
+    train_dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=False)
+    test_dataloader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False)    
+    return train_dataloader, test_dataloader
 
 def load_cifar10(batch_size, i, n):
     transform = transforms.Compose([
@@ -88,6 +139,49 @@ class CifarClassifier(nn.Module):
         """Set the global model for the client."""
         self._global_model = model
     
+
+class NuClassifier(nn.Module):
+    def __init__(self, dev, input_shape=(3, 80, 45)):
+        super(NuClassifier, self).__init__()
+        log(INFO, f"NuClasssifier")
+        # Convs
+        self.conv1 = nn.Conv2d(3, 16, kernel_size=3, stride=2, padding=1)
+        self.conv2 = nn.Conv2d(16, 32, kernel_size=3, stride=2, padding=1)
+        
+        # figure out flatten size dynamically
+        with torch.no_grad():
+            dummy = torch.zeros(1, *input_shape)  # batch=1, shape=(3,80,45)
+            dummy_out = self._forward_convs(dummy)
+            flatten_dim = dummy_out.view(1, -1).size(1)
+        
+        # FC layers
+        self.fc1 = nn.Linear(flatten_dim, 64)
+        self.fc2 = nn.Linear(64, 10)
+
+        self.dropout = nn.Dropout(0.5)
+        self._dev = dev
+        self._global_model = None
+        self._run_mode = None
+
+    def _forward_convs(self, x):
+        x = F.relu(self.conv1(x))
+        x = F.max_pool2d(x, 2)
+        x = F.relu(self.conv2(x))
+        x = F.max_pool2d(x, 2)
+        return x
+
+    def forward(self, x):
+        x = self._forward_convs(x)
+        x = x.view(x.size(0), -1)
+        x = F.relu(self.fc1(x))
+        x = self.dropout(x)
+        x = self.fc2(x)
+        return x
+
+    def set_global_model(self, model):
+        """Set the global model for the client."""
+        self._global_model = model
+
 def train(net, trainloader, epochs: int, verbose=False, config=None):
     """Train the network on the training set."""
     # if net._run_mode == "fedcm":
@@ -300,10 +394,13 @@ if __name__ == "__main__":
     DEVICE = torch.device("cpu")
     trainloader, valloader = load_cifar10(args.batch_size, args.num, args.start_clients+1)
     net = CifarClassifier(DEVICE).to(DEVICE)
-    if args.noise:
-        flwr_client = DummyClient(net, trainloader, valloader, args.epochs, args.learning_rate).to_client()        
-    else:
-        flwr_client = FlowerClient(net, trainloader, valloader, args.epochs, args.learning_rate).to_client()
+    # trainloader, valloader = load_nu(args.batch_size, args.num, args.start_clients+1)
+    # net = NuClassifier(DEVICE).to(DEVICE)
+    # if args.noise:
+    #     flwr_client = DummyClient(net, trainloader, valloader, args.epochs, args.learning_rate).to_client()        
+    # else:
+    #     flwr_client = FlowerClient(net, trainloader, valloader, args.epochs, args.learning_rate).to_client()
+    flwr_client = DummyClient(net, trainloader, valloader, args.epochs, args.learning_rate).to_client()        
     fl.client.start_client(server_address=args.server_address, client=flwr_client.to_client())
     end_time = datetime.datetime.now()
     duration = end_time-start_time

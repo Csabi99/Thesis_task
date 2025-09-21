@@ -1,5 +1,5 @@
 # Use an official Python runtime as a parent image
-FROM python:3.10-slim-buster
+FROM python:3.10-slim-bullseye
 
 # Set the working directory in the container to /app
 WORKDIR /app
@@ -16,16 +16,13 @@ RUN apt-get update && apt-get install -y \
 # Install any needed packages specified in requirements.txt
 RUN pip install -r requirements.txt
 
-# COPY ./carla /app/carla
-# COPY ./films_dataset/120-180-posters /app/films/images
-# COPY ./films_dataset/genres/labels /app/films/labels
 
 # Copy your server script into the container
-COPY ./client_carla.py /app/client.py
+COPY ./client.py /app/client.py
 COPY ./server.py /app/server.py
 COPY ./config.yaml /app/config.yaml
 COPY ./strategies.py /app/strategies.py
-
+COPY ./nu /app/data
 # Specify the command to run the server script
 ENTRYPOINT ["python", "server.py"]
 

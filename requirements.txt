@@ -5,3 +5,5 @@ flwr_datasets[vision] == 0.0.2
 pandas==2.2.2
 torch==2.2.2
 torchvision==0.17.2
+wandb
+openml

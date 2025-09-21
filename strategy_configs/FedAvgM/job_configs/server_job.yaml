@@ -11,6 +11,12 @@ spec:
       containers:
       - name: server
         image: ccsaba99/server-image:latest  # Your server Docker image
+        env:
+          - name: OPENML_API_KEY
+            valueFrom:
+              secretKeyRef:
+                name: openml-secret   # <-- matches the secret name
+                key: OPENML_API_KEY   # <-- the key inside that secret        
         ports:
         - containerPort: 8080
         volumeMounts:

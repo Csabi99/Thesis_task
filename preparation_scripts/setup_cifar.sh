@@ -12,25 +12,25 @@ ns="$2"
 config_file="$path/config.yaml"
 
 echo "Starting script execution with path: $path and namespace: $ns..."
-echo "Navigating to the working directory at /home/ubuntu/data/..."
-cd /home/ubuntu/data/ || exit
+echo "Navigating to the working directory at /home/ubuntu/thesis/..."
+cd /home/ubuntu/thesis/ || exit
 
 # Copy the configuration file
-echo "Copying configuration file from ${path}/config.yaml to /home/ubuntu/data/config.yaml..."
-cp "${path}/config.yaml" /home/ubuntu/data/config.yaml
+echo "Copying configuration file from ${path}/config.yaml to /home/ubuntu/thesis/config.yaml..."
+cp "${path}/config.yaml" /home/ubuntu/thesis/config.yaml
 
 # Build and push Docker images
 echo "Building and pushing Docker images..."
-docker build -t ccsaba99/server-image:latest -f Dockerfile_server .
-docker build -t ccsaba99/client-image:latest -f Dockerfile_client .
+docker build -t ccsaba99/server-image:latest -f ./dockerfiles/Dockerfile_server .
+docker build -t ccsaba99/client-image:latest -f ./dockerfiles/Dockerfile_client .
 docker push ccsaba99/server-image:latest
 docker push ccsaba99/client-image:latest
 
 # Kubernetes setup
 echo "Setting up Kubernetes namespace $ns and applying persistent volumes..."
 sudo kubectl create namespace "$ns"
-sudo kubectl apply -f persistent-volume.yaml
-sudo kubectl apply -f persistent-volume-claim.yaml -n "$ns"
+sudo kubectl apply -f ./dockerfiles/persistent-volume.yaml
+sudo kubectl apply -f ./dockerfiles/persistent-volume-claim.yaml -n "$ns"
 
 # Apply server configurations
 echo "Applying server configurations..."

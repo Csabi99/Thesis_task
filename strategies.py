@@ -23,7 +23,6 @@ import torch.nn as nn
 from io import BytesIO
 
 
-
 class FedAvgMDefault(FedAvgM):
     """Federated Averaging with Momentum strategy.
 
@@ -115,6 +114,7 @@ class FedAvgMDefault(FedAvgM):
             )
         self.initial_parameters = get_parameters_res.parameters
         return self.initial_parameters   
+
     
 
 class FedCM(FedAvg):
@@ -272,6 +272,7 @@ class FedCM(FedAvg):
 
         # Return client/config pairs
         return [(client, fit_ins) for client in clients]    
+        
 
 def aggregate_fit(self, server_round, results, failures):
     if not results:
@@ -326,6 +327,7 @@ def aggregate_fit(self, server_round, results, failures):
 
     self.current_weights = ndarrays_to_parameters(new_weights)
     return self.current_weights, {}
+
 
 #TODO (here based on fedadam but can use fedavgm as well)
     # def aggregate_fit(
@@ -527,6 +529,7 @@ class FedAdamDefault(FedAdam):
         for x in self.current_weights:
             log(INFO, f"Layer : x={x.dtype}")
         return self.initial_parameters
+  
     
 class FedAdagradDefault(FedAdagrad):
     """FedAdagrad strategy - Adaptive Federated Optimization using Adagrad.
@@ -640,7 +643,8 @@ class FedAdagradDefault(FedAdagrad):
         log(INFO, "Types of weights:")
         for x in self.current_weights:
             log(INFO, f"Layer : x={x.dtype}")
-        return self.initial_parameters        
+        return self.initial_parameters     
+  
 
 class FedYogiDefault(FedYogi):
     """FedYogi [Reddi et al., 2020] strategy.
@@ -764,4 +768,4 @@ class FedYogiDefault(FedYogi):
         log(INFO, "Types of weights:")
         for x in self.current_weights:
             log(INFO, f"Layer : x={x.dtype}")
-        return self.initial_parameters                
+        return self.initial_parameters                  
