@@ -62,8 +62,8 @@ def start_fl_server(strategy, rounds, run: openml.runs.OpenMLRun):
             strategy=strategy,
         )
         run.evaluations = {
-            "final_accuracy": hist[-1]["acc"],
-            "final_loss": hist[-1]["loss"],
+            "final_accuracy": hist.metrics_centralized["accuracy"][-1][1] if "accuracy" in hist.metrics_centralized else None,
+            "final_loss": hist.losses_centralized[-1][1],
             "rounds": rounds,
             "min_fit_clients": args.strategy.min_fit_clients,
             "min_available_clients": args.strategy.min_available_clients,
