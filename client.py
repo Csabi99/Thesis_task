@@ -18,8 +18,8 @@ from torchvision.io import read_image
 from torch.utils.data import random_split
 import torchvision.transforms as transforms
 from torchvision.datasets import CIFAR10
+import torchvision.models as models
 import random
-
 import flwr as fl
 import datetime
 
@@ -33,13 +33,15 @@ class NuImageDataset(Dataset):
             transforms.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2, hue=0.1),  # Randomly adjust color properties
             #transforms.ToTensor(),  # Convert PIL images to PyTorch tensors
             transforms.ConvertImageDtype(torch.float32),  # <--- convert uint8 → float32 in [0,1]
-            transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))  # Normalize to [-1, 1]
+            transforms.Normalize(mean=[0.485, 0.456, 0.406],
+                        std=[0.229, 0.224, 0.225])  # Normalize
         ])
         self.test_transform = transforms.Compose([
             transforms.Resize(size=(80, 45)),  # Resize images to 80x45 pixels
             #transforms.ToTensor(),  # Convert PIL images to PyTorch tensors
             transforms.ConvertImageDtype(torch.float32),  # <--- convert uint8 → float32 in [0,1]
-            transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))  # Normalize to [-1, 1]
+            transforms.Normalize(mean=[0.485, 0.456, 0.406],
+                        std=[0.229, 0.224, 0.225])  # Normalize
         ])
         self.test = is_test
         self.images = [f for f in os.listdir(img_dir) if f.endswith('.jpg')]
@@ -182,6 +184,43 @@ class NuClassifier(nn.Module):
         """Set the global model for the client."""
         self._global_model = model
 
+
+class TransferClassifier(nn.Module):
+    def __init__(self, dev, num_classes=10, freeze_backbone=True):
+        super(TransferClassifier, self).__init__()
+        
+        model_path = "/app/models/mobilenet_v2-b0353104.pth"
+
+        # Load MobileNetV2 without downloading
+        self.backbone = models.mobilenet_v2(weights=None)  # avoid downloading
+        state_dict = torch.load(model_path, map_location="cpu")
+        self.backbone.load_state_dict(state_dict)
+
+        # Optionally freeze backbone
+        if freeze_backbone:
+            for param in self.backbone.features.parameters():
+                param.requires_grad = False
+
+        # Replace classifier head
+        in_features = self.backbone.classifier[1].in_features
+        self.backbone.classifier = nn.Sequential(
+            nn.Linear(in_features, 128),
+            nn.ReLU(),
+            nn.Dropout(0.4),
+            nn.Linear(128, num_classes)
+        )
+
+        self._dev = dev
+        self._global_model = None
+        self._run_mode = None
+
+    def forward(self, x):
+        return self.backbone(x)
+
+    def set_global_model(self, model):
+        self._global_model = model
+
+
 def train(net, trainloader, epochs: int, verbose=False, config=None):
     """Train the network on the training set."""
     # if net._run_mode == "fedcm":
@@ -279,6 +318,14 @@ def set_parameters(net, parameters: List[np.ndarray]):
 def get_parameters(net) -> List[np.ndarray]:
     return [val.cpu().numpy() for _, val in net.state_dict().items()]
 
+def get_head_parameters(model):
+    return [val.cpu().numpy() for _, val in model.backbone.classifier.state_dict().items()]
+
+def set_head_parameters(model, parameters):
+    state_dict = model.backbone.classifier.state_dict()
+    new_state_dict = {k: torch.tensor(v) for k, v in zip(state_dict.keys(), parameters)}
+    model.backbone.classifier.load_state_dict(new_state_dict)
+
 class FlowerClient(fl.client.NumPyClient):
     def __init__(self, net, trainloader, valloader, epochs, learning_rate):
         self.net = net
@@ -288,7 +335,8 @@ class FlowerClient(fl.client.NumPyClient):
         self.learning_rate = learning_rate
 
     def get_parameters(self, config):
-        return get_parameters(self.net)
+        return get_head_parameters(self.net)
+        # return get_parameters(self.net)
 
     def fit(self, parameters, config):
         #self.net.set_global_model(parameters)
@@ -309,17 +357,20 @@ class FlowerClient(fl.client.NumPyClient):
         else:
             log(INFO, f"Using run mode: default")
             self.net._run_mode = "default"
-        set_parameters(self.net, parameters)
+        # set_parameters(self.net, parameters)
+        set_head_parameters(self.net, parameters)
         #pairs = [{"weight1": w1.detach().numpy(), "weight2": w2} for w1, w2 in zip(net.parameters(), parameters)]
         #log(DEBUG, f"possible input: {pairs}")
         if self.learning_rate != 0:
             config["eta_l"] = self.learning_rate
         #train(self.net, self.trainloader, epochs=self.epochs, verbose=True, config=config)
         train(self.net, self.trainloader, epochs=self.epochs, verbose=True, config=config)
-        return get_parameters(self.net), len(self.trainloader), {}
+        #return get_parameters(self.net), len(self.trainloader), {}
+        return get_head_parameters(self.net), len(self.trainloader), {}
 
     def evaluate(self, parameters, config):
-        set_parameters(self.net, parameters)
+        # set_parameters(self.net, parameters)
+        set_head_parameters(self.net, parameters)
         loss, accuracy = test(self.net, self.valloader)
         #self.logger.info("accuracy: "+ str(float(accuracy)))
         return float(loss), len(self.valloader), {"accuracy": float(accuracy)}    
@@ -392,15 +443,14 @@ if __name__ == "__main__":
     start_time = datetime.datetime.now()
     log(INFO, f"{start_time}: Client script started")
     DEVICE = torch.device("cpu")
-    trainloader, valloader = load_cifar10(args.batch_size, args.num, args.start_clients+1)
-    net = CifarClassifier(DEVICE).to(DEVICE)
-    # trainloader, valloader = load_nu(args.batch_size, args.num, args.start_clients+1)
-    # net = NuClassifier(DEVICE).to(DEVICE)
-    # if args.noise:
-    #     flwr_client = DummyClient(net, trainloader, valloader, args.epochs, args.learning_rate).to_client()        
-    # else:
-    #     flwr_client = FlowerClient(net, trainloader, valloader, args.epochs, args.learning_rate).to_client()
-    flwr_client = DummyClient(net, trainloader, valloader, args.epochs, args.learning_rate).to_client()        
+    # trainloader, valloader = load_cifar10(args.batch_size, args.num, args.start_clients+1)
+    # net = CifarClassifier(DEVICE).to(DEVICE)
+    trainloader, valloader = load_nu(args.batch_size, args.num, args.start_clients+1)
+    net = TransferClassifier(DEVICE).to(DEVICE)
+    if args.noise:
+        flwr_client = DummyClient(net, trainloader, valloader, args.epochs, args.learning_rate).to_client()        
+    else:
+        flwr_client = FlowerClient(net, trainloader, valloader, args.epochs, args.learning_rate).to_client()
     fl.client.start_client(server_address=args.server_address, client=flwr_client.to_client())
     end_time = datetime.datetime.now()
     duration = end_time-start_time

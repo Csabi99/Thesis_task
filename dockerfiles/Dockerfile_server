@@ -23,6 +23,7 @@ COPY ./server.py /app/server.py
 COPY ./config.yaml /app/config.yaml
 COPY ./strategies.py /app/strategies.py
 COPY ./nu /app/data
+COPY ./models /app/models
 # Specify the command to run the server script
 ENTRYPOINT ["python", "server.py"]
 

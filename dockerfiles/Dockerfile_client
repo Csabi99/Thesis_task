@@ -20,6 +20,7 @@ RUN pip install -r requirements.txt
 # COPY ./films_dataset/120-180-posters /app/films/images
 # COPY ./films_dataset/genres/labels /app/films/labels
 COPY ./nu /app/data
+COPY ./models /app/models
 
 # Copy your client script into the container
 COPY ./client.py /app/client.py

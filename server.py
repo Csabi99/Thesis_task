@@ -5,7 +5,7 @@ import yaml
 from flwr.common.logger import log
 import datetime
 from typing import Callable, Tuple, Dict, Optional
-from client import CifarClassifier, NuClassifier, test, set_parameters, load_cifar10, load_nu
+from client import CifarClassifier, NuClassifier, TransferClassifier, test, set_parameters, set_head_parameters, load_cifar10, load_nu
 import torch
 import strategies as flwr_strategies
 import traceback
@@ -54,26 +54,26 @@ def init_config(path: Optional[str] = '/app/config.yaml') -> argparse.Namespace:
 
 
 # Function to Start Federated Learning Server
-def start_fl_server(strategy, rounds, run: openml.runs.OpenMLRun):
+def start_fl_server(strategy, rounds):
     try:
         hist = fl.server.start_server(
             server_address="0.0.0.0:8080",
             config=fl.server.ServerConfig(num_rounds=rounds),
             strategy=strategy,
         )
-        run.evaluations = {
-            "final_accuracy": hist.metrics_centralized["accuracy"][-1][1] if "accuracy" in hist.metrics_centralized else None,
-            "final_loss": hist.losses_centralized[-1][1],
-            "rounds": rounds,
-            "min_fit_clients": args.strategy.min_fit_clients,
-            "min_available_clients": args.strategy.min_available_clients,
-            "fraction_fit": args.strategy.fraction_fit,
-            "strategy": args.strategy,
-            "loss": json.dumps(hist.losses_centralized),
-            "metrics": json.dumps(hist.metrics_centralized),
-        }
+        # run.evaluations = {
+        #     "final_accuracy": hist.metrics_centralized["accuracy"][-1][1] if "accuracy" in hist.metrics_centralized else None,
+        #     "final_loss": hist.losses_centralized[-1][1],
+        #     "rounds": rounds,
+        #     "min_fit_clients": strategy.min_fit_clients,
+        #     "min_available_clients": strategy.min_available_clients,
+        #     "fraction_fit": strategy.fraction_fit,
+        #     "strategy": strategy.__class__.__name__,
+        #     "loss": json.dumps(hist.losses_centralized),
+        #     "metrics": json.dumps(hist.metrics_centralized),
+        # }
 
-        run.publish()
+        # run.publish()
     except Exception as e:
         log(ERROR, f"FL Server error: {traceback.format_exc()}")
         raise e
@@ -138,11 +138,14 @@ def evaluate(
     server_round: int,
     parameters,
     config):
-    net = CifarClassifier(torch.device("cpu")).to(torch.device("cpu"))
-    trainloader, valloader = load_cifar10(32, 0, args.start_clients+1)
+    # net = CifarClassifier(torch.device("cpu")).to(torch.device("cpu"))
+    net = TransferClassifier(torch.device("cpu")).to(torch.device("cpu"))
+    # trainloader, valloader = load_cifar10(32, 0, args.start_clients+1)
+    trainloader, valloader = load_nu(32, 0, args.start_clients+1)
     # net = NuClassifier(torch.device("cpu")).to(torch.device("cpu"))
     # trainloader, valloader = load_nu(32, 0, args.start_clients+1)    
-    set_parameters(net, parameters)  # Update model with the latest parameters
+    # set_parameters(net, parameters)  # Update model with the latest parameters
+    set_head_parameters(net, parameters)  # Update model with the latest parameters
     loss, accuracy = test(net, valloader)
     print(f"Server-side evaluation loss {loss} / accuracy {accuracy}")
     # wandb.log({
@@ -167,12 +170,19 @@ if __name__ == "__main__":
     #     "rounds": args.number_of_rounds,
     #     "strategy": args.strategy,
     # })    
-    run = openml.runs.OpenMLRun(
-        task_id=None,   # optional if not tied to an OpenML task
-        flow_id=None,   # optional if not tied to a model
-        dataset_id=None,  # ID of the Fashion-MNIST dataset on OpenML
-        tags=["federated-learning", "flower", args.strategy, "test"],
-    )    
+    # run = openml.runs.OpenMLRun(
+    #     task_id=None,   # optional if not tied to an OpenML task
+    #     flow_id=8053,   # optional if not tied to a model
+    #     dataset_id=None,  # ID of the Fashion-MNIST dataset on OpenML
+    #     tags=["federated-learning", "flower", args.strategy, "test"],
+    #     parameter_settings={
+    #         "rounds": args.number_of_rounds,
+    #         "min_fit_clients": args.min_clients,
+    #         "min_available_clients": args.available_clients,
+    #         "fraction_fit": args.fraction_fit,
+    #         "strategy": args.strategy,
+    #     }
+    # )    
     # # Initialize Strategy Instance and Start FL Server
     # #strategy_instance = fl.server.strategy.FedAvg(min_fit_clients=args.min_clients, min_available_clients=args.available_clients, fraction_fit=args.fraction_fit, evaluate_fn=evaluate)
     strategy_class = getattr(flwr_strategies, args.strategy)
@@ -180,7 +190,8 @@ if __name__ == "__main__":
     strategy_instance = strategy_class(min_fit_clients=args.min_clients, min_available_clients=args.available_clients, fraction_fit=args.fraction_fit, evaluate_fn=evaluate, **args.strategy_config)
     log(INFO, f"Using strategy: {args.strategy}")
     log(INFO, f"Strategy parameters: {args.strategy_config}")
-    start_fl_server(strategy=strategy_instance, rounds=args.number_of_rounds, run=run)
+    args.number_of_rounds=2
+    start_fl_server(strategy=strategy_instance, rounds=args.number_of_rounds)
     end_time = datetime.datetime.now()
     duration = end_time-start_time
     log(INFO, f"{end_time}: Server script finished, took {duration.total_seconds()} seconds")
