@@ -1,0 +1,2 @@
+#ignore everything in client_num_configs directory
+client_num_configs/*

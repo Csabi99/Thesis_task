@@ -12,7 +12,7 @@ import traceback
 import wandb
 import openml
 import json
-
+import os
 
 def init_config(path: Optional[str] = '/app/config.yaml') -> argparse.Namespace:
     with open(path, 'r') as file:
@@ -105,33 +105,33 @@ def fit_config(server_round: int):
 
 # # Publish run
 # run.publish()
-# def patch_strategy(cls):
-#     """Patch a strategy class so its evaluate logs to WandB."""
-#     old_evaluate = getattr(cls, "evaluate", None)
+def patch_strategy(cls):
+    """Patch a strategy class so its evaluate logs to WandB."""
+    old_evaluate = getattr(cls, "evaluate", None)
 
-#     def custom_evaluate(self, server_round, parameters):
-#         # call original if it exists
-#         eval_res = None
-#         if old_evaluate is not None:
-#             eval_res = old_evaluate(self, server_round, parameters)
+    def custom_evaluate(self, server_round, parameters):
+        # call original if it exists
+        eval_res = None
+        if old_evaluate is not None:
+            eval_res = old_evaluate(self, server_round, parameters)
 
-#             # handle None metrics safely
-#             loss, metrics = eval_res
-#             metrics = metrics or {}
-#         else:
-#             loss, metrics = None, {}
+            # handle None metrics safely
+            loss, metrics = eval_res
+            metrics = metrics or {}
+        else:
+            loss, metrics = None, {}
 
-#         # log to wandb
-#         wandb.log({
-#             "round": server_round,
-#             "loss": loss,
-#             **metrics,
-#         })
+        # log to wandb
+        wandb.log({
+            "round": server_round,
+            "loss": loss,
+            **metrics,
+        })
 
-#         return eval_res
+        return eval_res
 
-#     cls.evaluate = custom_evaluate
-#     return cls
+    cls.evaluate = custom_evaluate
+    return cls
 
 # The `evaluate` function will be called by Flower after every round
 def evaluate(
@@ -148,11 +148,11 @@ def evaluate(
     set_head_parameters(net, parameters)  # Update model with the latest parameters
     loss, accuracy = test(net, valloader)
     print(f"Server-side evaluation loss {loss} / accuracy {accuracy}")
-    # wandb.log({
-    #     "round": server_round,
-    #     "loss": loss,
-    #     "accuracy": accuracy
-    # })
+    wandb.log({
+        "round": server_round,
+        "loss": loss,
+        "accuracy": accuracy
+    })
     return loss, {"accuracy": accuracy}
 
  
@@ -165,11 +165,11 @@ if __name__ == "__main__":
     start_time = datetime.datetime.now()
     fl.common.logger.configure(identifier=f"FlowerServer", filename=f"/app/logs/log_server_{args.strategy}.txt")
     log(INFO, f"{start_time}: Server script started with {args.start_clients} clients")
-    # wandb.init(project="federated-learning", group="experiment-1", job_type="server", config={
-    #     "clients_num": args.start_clients,
-    #     "rounds": args.number_of_rounds,
-    #     "strategy": args.strategy,
-    # })    
+    wandb.init(project="federated-learning", group="experiment-2", job_type="server", config={
+        "clients_num": args.start_clients,
+        "rounds": args.number_of_rounds,
+        "strategy": args.strategy,
+    })    
     # run = openml.runs.OpenMLRun(
     #     task_id=None,   # optional if not tied to an OpenML task
     #     flow_id=8053,   # optional if not tied to a model
@@ -190,7 +190,6 @@ if __name__ == "__main__":
     strategy_instance = strategy_class(min_fit_clients=args.min_clients, min_available_clients=args.available_clients, fraction_fit=args.fraction_fit, evaluate_fn=evaluate, **args.strategy_config)
     log(INFO, f"Using strategy: {args.strategy}")
     log(INFO, f"Strategy parameters: {args.strategy_config}")
-    args.number_of_rounds=2
     start_fl_server(strategy=strategy_instance, rounds=args.number_of_rounds)
     end_time = datetime.datetime.now()
     duration = end_time-start_time

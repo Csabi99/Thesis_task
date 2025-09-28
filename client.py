@@ -22,6 +22,7 @@ import torchvision.models as models
 import random
 import flwr as fl
 import datetime
+import wandb
 
 class NuImageDataset(Dataset):
     def __init__(self, img_dir, is_test: bool = False):
@@ -44,18 +45,19 @@ class NuImageDataset(Dataset):
                         std=[0.229, 0.224, 0.225])  # Normalize
         ])
         self.test = is_test
-        self.images = [f for f in os.listdir(img_dir) if f.endswith('.jpg')]
-        self.images.sort()
+        self.img_labels = pd.read_csv('/app/data/labels.csv')
+        #self.images = [f for f in os.listdir(img_dir) if f.endswith('.jpg')]
+        #self.images.sort()
 
     def __len__(self):
-        return len(self.images)
+        return len(self.img_labels)
 
     def __getitem__(self, idx):
-        #img_path = os.path.join(self.img_dir, f'{self.img_labels.iloc[idx, 0]}.png')
-        img_path = os.path.join(self.img_dir, self.images[idx])
+        img_path = os.path.join(self.img_dir, self.img_labels.iloc[idx, 1])
         image = read_image(img_path)
-        # label = self.img_labels.iloc[idx, 1]
-        label  = random.randint(0, 9)  # Dummy label for illustration
+        str_label = self.img_labels.iloc[idx, 2]
+        mapping = {'human': 0, 'human-vehicle': 1, 'none': 2, 'vehicle': 3}
+        label = mapping[str_label]
         if self.test:
             image = self.test_transform(image)
         else:
@@ -64,17 +66,15 @@ class NuImageDataset(Dataset):
     
 def load_nu(batch_size, i, n):
     dataset = NuImageDataset(img_dir='/app/data', is_test=False)
-    test_dataset = NuImageDataset(img_dir='/app/data', is_test=True)
     log(INFO, f"NuDataset")
-    # generator1 = torch.Generator().manual_seed(42)
-    # fractions = [1 / n for _ in range(n - 1)]  # First n-1 elements
-    # fractions.append(1 - sum(fractions))       # Adjust the last element
-    # tr_splits = random_split(dataset, fractions, generator=generator1)
-    # te_splits = random_split(test_dataset, fractions, generator=generator1)
-    # train_dataloader = DataLoader(tr_splits[i], batch_size=batch_size, shuffle=False)
-    # test_dataloader = DataLoader(te_splits[i], batch_size=batch_size, shuffle=False)
-    train_dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=False)
-    test_dataloader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False)    
+    generator1 = torch.Generator().manual_seed(42)
+    splits = random_split(dataset, [0.8, 0.2], generator=generator1)    
+    fractions = [1 / n for _ in range(n - 1)]  # First n-1 elements
+    fractions.append(1 - sum(fractions))       # Adjust the last element
+    tr_splits = random_split(splits[0], fractions, generator=generator1)
+    te_splits = random_split(splits[1], fractions, generator=generator1)
+    train_dataloader = DataLoader(tr_splits[i], batch_size=batch_size, shuffle=False)
+    test_dataloader = DataLoader(te_splits[i], batch_size=batch_size, shuffle=False)  
     return train_dataloader, test_dataloader
 
 def load_cifar10(batch_size, i, n):
@@ -265,6 +265,11 @@ def train(net, trainloader, epochs: int, verbose=False, config=None):
             correct += (torch.max(outputs.data, 1)[1] == labels).sum().item()
         epoch_loss /= len(trainloader.dataset)
         epoch_acc = correct / total
+        wandb.log({
+            "epoch": epoch,
+            "local_loss": epoch_loss,
+            "local_accuracy": epoch_acc
+        })
         if verbose:
             log(INFO, f"Epoch {epoch+1}: train loss {epoch_loss}, accuracy {epoch_acc}")
 
@@ -372,7 +377,7 @@ class FlowerClient(fl.client.NumPyClient):
         # set_parameters(self.net, parameters)
         set_head_parameters(self.net, parameters)
         loss, accuracy = test(self.net, self.valloader)
-        #self.logger.info("accuracy: "+ str(float(accuracy)))
+        #self.logger.info("accuracy: "+ str(float(accuracy)))        
         return float(loss), len(self.valloader), {"accuracy": float(accuracy)}    
 
 class DummyClient(fl.client.NumPyClient):
@@ -428,6 +433,10 @@ def init_client():
                         action='store_true', default=False)
     parser.add_argument("--num", help=f"the client starts training based on test case number: from 1",
                         type=int)
+    parser.add_argument(
+        '--strategy', type=str, default=config.get("strategy", {}).get("name", "FedAvg"),
+        help="Federated learning strategy to use (FedAvg, FedProx, etc.). Gets from configfile. If not defined there, defaults to FedAvg.",
+    )    
 
     args = parser.parse_args()
     return args
@@ -436,6 +445,13 @@ if __name__ == "__main__":
     args = init_client()
     NUM_CLIENTS = args.start_clients
     BATCH_SIZE = args.batch_size
+    wandb.init(
+    project=f"federated-learning-{args.strategy}-{args.start_clients}", # project name
+    group="experiment-2",          # same as server
+    job_type="client",             # marks this as a client run
+    name=f"client-{args.num}"
+    )
+
     if args.num > NUM_CLIENTS:
         log(ERROR, "Test case number does not exist")
         exit()

@@ -16,14 +16,13 @@ RUN apt-get update && apt-get install -y \
 # Install any needed packages specified in requirements.txt
 RUN pip install -r requirements.txt
 
-
+COPY ./nu /app/data
 # Copy your server script into the container
 COPY ./client.py /app/client.py
 COPY ./server.py /app/server.py
-COPY ./config.yaml /app/config.yaml
 COPY ./strategies.py /app/strategies.py
-COPY ./nu /app/data
 COPY ./models /app/models
+COPY ./config.yaml /app/config.yaml
 # Specify the command to run the server script
 ENTRYPOINT ["python", "server.py"]
 

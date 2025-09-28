@@ -19,15 +19,14 @@ RUN pip install -r requirements.txt
 # COPY ./carla /app/carla
 # COPY ./films_dataset/120-180-posters /app/films/images
 # COPY ./films_dataset/genres/labels /app/films/labels
-COPY ./nu /app/data
 COPY ./models /app/models
-
-# Copy your client script into the container
-COPY ./client.py /app/client.py
-COPY ./config.yaml /app/config.yaml
 
 # Create an entrypoint script
 COPY ./entrypoint.sh /app/entrypoint.sh
+COPY ./nu /app/data
+# Copy your client script into the container
+COPY ./client.py /app/client.py
+COPY ./config.yaml /app/config.yaml
 RUN chmod +x /app/entrypoint.sh
 
 # Specify the command to run the entrypoint script
