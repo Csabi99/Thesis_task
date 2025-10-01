@@ -1,0 +1,29 @@
+# Use an official Python runtime as a parent image
+FROM python:3.10-slim-bullseye
+
+# Set the working directory in the container to /app
+WORKDIR /app
+
+# Copy the requirements file into the container
+COPY ./requirements.txt /app/requirements.txt
+# Install gcc and other dependencies
+RUN apt-get update && apt-get install -y \
+    gcc \
+    python3-dev && \
+    rm -rf /var/lib/apt/lists/*
+
+# Install any needed packages specified in requirements.txt
+RUN pip install -r requirements.txt
+
+# Copy the Carla dataset files into the container
+# COPY ./carla /app/carla
+# COPY ./films_dataset/120-180-posters /app/films/images
+# COPY ./films_dataset/genres/labels /app/films/labels
+COPY ./models /app/models
+
+# Create an entrypoint script
+COPY ./entrypoint.sh /app/entrypoint.sh
+COPY ./nu /app/data
+# Copy your client script into the container
+COPY ./client.py /app/client.py
+

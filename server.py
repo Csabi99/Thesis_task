@@ -139,7 +139,8 @@ def evaluate(
     parameters,
     config):
     # net = CifarClassifier(torch.device("cpu")).to(torch.device("cpu"))
-    net = TransferClassifier(torch.device("cpu")).to(torch.device("cpu"))
+    DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    net = TransferClassifier(DEVICE).to(DEVICE)
     # trainloader, valloader = load_cifar10(32, 0, args.start_clients+1)
     trainloader, valloader = load_nu(32, 0, args.start_clients+1)
     # net = NuClassifier(torch.device("cpu")).to(torch.device("cpu"))

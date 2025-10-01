@@ -5,7 +5,6 @@ from flwr.common.logger import log
 from logging import INFO, DEBUG, ERROR
 import yaml
 
-
 import pandas as pd
 import numpy as np
 import torch
@@ -54,7 +53,7 @@ class NuImageDataset(Dataset):
 
     def __getitem__(self, idx):
         img_path = os.path.join(self.img_dir, self.img_labels.iloc[idx, 1])
-        image = read_image(img_path)
+        image = read_image(img_path)  # returns a tensor [C,H,W] uint8
         str_label = self.img_labels.iloc[idx, 2]
         mapping = {'human': 0, 'human-vehicle': 1, 'none': 2, 'vehicle': 3}
         label = mapping[str_label]
@@ -188,20 +187,15 @@ class NuClassifier(nn.Module):
 class TransferClassifier(nn.Module):
     def __init__(self, dev, num_classes=10, freeze_backbone=True):
         super(TransferClassifier, self).__init__()
-        
+        self._dev = dev
         model_path = "/app/models/mobilenet_v2-b0353104.pth"
-
-        # Load MobileNetV2 without downloading
-        self.backbone = models.mobilenet_v2(weights=None)  # avoid downloading
+        # Load MobileNetV2 without downloading, load weights to CPU first
+        self.backbone = models.mobilenet_v2(weights=None)
         state_dict = torch.load(model_path, map_location="cpu")
         self.backbone.load_state_dict(state_dict)
-
-        # Optionally freeze backbone
         if freeze_backbone:
             for param in self.backbone.features.parameters():
                 param.requires_grad = False
-
-        # Replace classifier head
         in_features = self.backbone.classifier[1].in_features
         self.backbone.classifier = nn.Sequential(
             nn.Linear(in_features, 128),
@@ -209,8 +203,8 @@ class TransferClassifier(nn.Module):
             nn.Dropout(0.4),
             nn.Linear(128, num_classes)
         )
-
-        self._dev = dev
+        # Move entire model to the target device
+        self.to(self._dev)
         self._global_model = None
         self._run_mode = None
 
@@ -236,22 +230,23 @@ def train(net, trainloader, epochs: int, verbose=False, config=None):
         for batch in trainloader:
             images, labels = batch[0].to(net._dev), batch[1].to(net._dev)
             optimizer.zero_grad()
-            outputs = net(images)        
+            outputs = net(images)
             if net._run_mode == "fedprox":
                 proximal_term = 0.0
+                # net._global_model expected as list of numpy arrays or CPU tensors
                 for local_weights, global_weights in zip(net.parameters(), net._global_model):
-                    np.save("/app/logs/local_weights.npy", local_weights.detach().numpy())
-                    np.save("/app/logs/global_weights.npy", global_weights) 
-                    current = np.linalg.norm((local_weights.detach().numpy() - global_weights))**2
+                    local_np = local_weights.detach().cpu().numpy()
+                    global_np = global_weights if isinstance(global_weights, np.ndarray) else np.array(global_weights)
+                    current = np.linalg.norm((local_np - global_np))**2
                     proximal_term += current
-                loss = criterion(net(images), labels) + (config["proximal_mu"] / 2) * proximal_term
+                loss = criterion(outputs, labels) + (config["proximal_mu"] / 2) * proximal_term
             else:
                 loss = criterion(outputs, labels)
             loss.backward()
             if net._run_mode == "fedcm":
                 with torch.no_grad():
                     g = [param.grad for param in net.parameters() if param.grad is not None]
-                    if config["gradient"] == None:
+                    if config.get("gradient", None) is None:
                         new_g = g
                     else:
                         new_g = [config["decay_alfa"] * _g + (1-config["decay_alfa"]) * dt for dt, _g in zip(config["gradient"], g)]
@@ -260,11 +255,12 @@ def train(net, trainloader, epochs: int, verbose=False, config=None):
 
             optimizer.step()
             # Metrics
-            epoch_loss += loss
+            epoch_loss += loss.item()
             total += labels.size(0)
             correct += (torch.max(outputs.data, 1)[1] == labels).sum().item()
+        # normalize by number of samples seen (len(trainloader.dataset) might be large if split)
         epoch_loss /= len(trainloader.dataset)
-        epoch_acc = correct / total
+        epoch_acc = correct / total if total > 0 else 0.0
         wandb.log({
             "epoch": epoch,
             "local_loss": epoch_loss,
@@ -310,15 +306,15 @@ def test(net, testloader):
             _, predicted = torch.max(outputs.data, 1)
             total += labels.size(0)
             correct += (predicted == labels).sum().item()
+    # normalize by number of samples
     loss /= len(testloader.dataset)
-    accuracy = correct / total
+    accuracy = correct / total if total > 0 else 0.0
     return loss, accuracy
 
 def set_parameters(net, parameters: List[np.ndarray]):
     params_dict = zip(net.state_dict().keys(), parameters)
     state_dict = OrderedDict({k: torch.Tensor(v) for k, v in params_dict})
     net.load_state_dict(state_dict, strict=True)
-
 
 def get_parameters(net) -> List[np.ndarray]:
     return [val.cpu().numpy() for _, val in net.state_dict().items()]
@@ -328,7 +324,10 @@ def get_head_parameters(model):
 
 def set_head_parameters(model, parameters):
     state_dict = model.backbone.classifier.state_dict()
+    # create tensors on CPU then move to model device when loading
     new_state_dict = {k: torch.tensor(v) for k, v in zip(state_dict.keys(), parameters)}
+    # cast tensors to the model device
+    new_state_dict = {k: v.to(model._dev) for k, v in new_state_dict.items()}
     model.backbone.classifier.load_state_dict(new_state_dict)
 
 class FlowerClient(fl.client.NumPyClient):
@@ -458,11 +457,15 @@ if __name__ == "__main__":
     fl.common.logger.configure(identifier=f"FlowerClient_{args.num}", filename=f"/app/logs/log_Client_{args.num}.txt")
     start_time = datetime.datetime.now()
     log(INFO, f"{start_time}: Client script started")
-    DEVICE = torch.device("cpu")
-    # trainloader, valloader = load_cifar10(args.batch_size, args.num, args.start_clients+1)
-    # net = CifarClassifier(DEVICE).to(DEVICE)
+
+    # Device selection: prefer GPU if available
+    if torch.cuda.is_available():
+        log(INFO, "CUDA is available. Using GPU.")
+    DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    # pick loaders and model (your original choice)
     trainloader, valloader = load_nu(args.batch_size, args.num, args.start_clients+1)
     net = TransferClassifier(DEVICE).to(DEVICE)
+
     if args.noise:
         flwr_client = DummyClient(net, trainloader, valloader, args.epochs, args.learning_rate).to_client()        
     else:
