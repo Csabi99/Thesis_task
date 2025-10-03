@@ -17,11 +17,11 @@ spec:
         env:
         - name: CLIENT_NUM
           value: "$i"  # Dynamically set CLIENT_NUM based on the iteration
-        - name: OPENML_API_KEY
+        - name: WANDB_API_KEY
           valueFrom:
             secretKeyRef:
-              name: openml-secret   # <-- matches the secret name
-              key: OPENML_API_KEY   # <-- the key inside that secret        
+              name: wandb-secret   # <-- matches the secret name
+              key: WANDB_API_KEY   # <-- the key inside that secret        
         volumeMounts:
         - mountPath: "/app/logs"  # Path inside the container where the volume will be mounted
           name: storage-volume          
