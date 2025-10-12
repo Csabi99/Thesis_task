@@ -26,6 +26,8 @@ COPY ./entrypoint.sh /app/entrypoint.sh
 COPY ./nu /app/data
 # Copy your client script into the container
 COPY ./client.py /app/client.py
+COPY ./models.py /app/models.py
+COPY ./load_data.py /app/load_data.py
 COPY ./config.yaml /app/config.yaml
 RUN chmod +x /app/entrypoint.sh
 

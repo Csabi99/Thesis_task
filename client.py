@@ -18,202 +18,11 @@ from torch.utils.data import random_split
 import torchvision.transforms as transforms
 from torchvision.datasets import CIFAR10
 import torchvision.models as models
-import random
 import flwr as fl
 import datetime
 import wandb
-
-class NuImageDataset(Dataset):
-    def __init__(self, img_dir, is_test: bool = False):
-        self.img_dir = img_dir
-        self.transform = transforms.Compose([
-            transforms.Resize(size=(80, 45)),  # Resize images to 80x45 pixels
-            transforms.RandomHorizontalFlip(p=0.5),  # Randomly flip images horizontally with a probability of 50%
-            transforms.RandomRotation(degrees=15),  # Randomly rotate images within ±15 degrees
-            transforms.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2, hue=0.1),  # Randomly adjust color properties
-            #transforms.ToTensor(),  # Convert PIL images to PyTorch tensors
-            transforms.ConvertImageDtype(torch.float32),  # <--- convert uint8 → float32 in [0,1]
-            transforms.Normalize(mean=[0.485, 0.456, 0.406],
-                        std=[0.229, 0.224, 0.225])  # Normalize
-        ])
-        self.test_transform = transforms.Compose([
-            transforms.Resize(size=(80, 45)),  # Resize images to 80x45 pixels
-            #transforms.ToTensor(),  # Convert PIL images to PyTorch tensors
-            transforms.ConvertImageDtype(torch.float32),  # <--- convert uint8 → float32 in [0,1]
-            transforms.Normalize(mean=[0.485, 0.456, 0.406],
-                        std=[0.229, 0.224, 0.225])  # Normalize
-        ])
-        self.test = is_test
-        self.img_labels = pd.read_csv('/app/data/labels.csv')
-        #self.images = [f for f in os.listdir(img_dir) if f.endswith('.jpg')]
-        #self.images.sort()
-
-    def __len__(self):
-        return len(self.img_labels)
-
-    def __getitem__(self, idx):
-        img_path = os.path.join(self.img_dir, self.img_labels.iloc[idx, 1])
-        image = read_image(img_path)  # returns a tensor [C,H,W] uint8
-        str_label = self.img_labels.iloc[idx, 2]
-        mapping = {'human': 0, 'human-vehicle': 1, 'none': 2, 'vehicle': 3}
-        label = mapping[str_label]
-        if self.test:
-            image = self.test_transform(image)
-        else:
-            image = self.transform(image)
-        return image, label  
-    
-def load_nu(batch_size, i, n):
-    dataset = NuImageDataset(img_dir='/app/data', is_test=False)
-    log(INFO, f"NuDataset")
-    generator1 = torch.Generator().manual_seed(42)
-    splits = random_split(dataset, [0.8, 0.2], generator=generator1)    
-    fractions = [1 / n for _ in range(n - 1)]  # First n-1 elements
-    fractions.append(1 - sum(fractions))       # Adjust the last element
-    tr_splits = random_split(splits[0], fractions, generator=generator1)
-    te_splits = random_split(splits[1], fractions, generator=generator1)
-    train_dataloader = DataLoader(tr_splits[i], batch_size=batch_size, shuffle=False)
-    test_dataloader = DataLoader(te_splits[i], batch_size=batch_size, shuffle=False)  
-    return train_dataloader, test_dataloader
-
-def load_cifar10(batch_size, i, n):
-    transform = transforms.Compose([
-    transforms.RandomHorizontalFlip(p=0.5),  # Randomly flip images horizontally with a probability of 50%
-    transforms.RandomRotation(degrees=15),  # Randomly rotate images within ±15 degrees
-    transforms.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2, hue=0.1),  # Randomly adjust color properties
-    transforms.ToTensor(),  # Convert PIL images to PyTorch tensors
-    transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))  # Normalize to [-1, 1]
-    ])
-    test_transform = transforms.Compose([
-    transforms.ToTensor(),  # Convert PIL images to PyTorch tensors
-    transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))  # Normalize to [-1, 1]
-    ])
-    train_dataset = CIFAR10(root='./data', train=True, download=True, transform=transform)
-    test_dataset = CIFAR10(root='./data', train=False, download=True, transform=test_transform)
-    generator1 = torch.Generator().manual_seed(42)
-    fractions = [1 / n for _ in range(n - 1)]  # First n-1 elements
-    fractions.append(1 - sum(fractions))       # Adjust the last element
-    tr_splits = random_split(train_dataset, fractions, generator=generator1)
-    te_splits = random_split(test_dataset, fractions, generator=generator1)
-    train_dataloader = DataLoader(tr_splits[i], batch_size=batch_size, shuffle=False)
-    test_dataloader = DataLoader(te_splits[i], batch_size=batch_size, shuffle=False)
-    return train_dataloader, test_dataloader
-    
-class CifarClassifier(nn.Module):
-    def __init__(self, dev):
-        super(CifarClassifier, self).__init__()
-        
-        # Two convolutional layers
-        self.conv1 = nn.Conv2d(in_channels=3, out_channels=16, kernel_size=3, stride=2, padding=1)
-        self.conv2 = nn.Conv2d(in_channels=16, out_channels=32, kernel_size=3, stride=2, padding=1)
-        
-        # Fully connected layers
-        self.fc1 = nn.Linear(32 * 2 * 2, 64)  # Adjusted for downsampled dimensions
-        self.fc2 = nn.Linear(64, 10)  # Output layer for binary classification
-
-        # Dropout layer for regularization
-        self.dropout = nn.Dropout(0.5)
-        self._dev = dev
-        self._global_model = None
-        self._run_mode = None
-
-    def forward(self, x):
-        # Convolutional layers with ReLU and max-pooling
-        x = F.relu(self.conv1(x))
-        x = F.max_pool2d(x, 2)
-
-        x = F.relu(self.conv2(x))
-        x = F.max_pool2d(x, 2)
-
-        # Flatten for fully connected layers
-        x = x.view(x.size(0), -1)  # Flatten tensor
-
-        # Fully connected layers with dropout and ReLU activation
-        x = F.relu(self.fc1(x))
-        x = self.dropout(x)
-        x = self.fc2(x)
-
-        # Output with sigmoid activation for binary classification
-        return x    
-
-    def set_global_model(self, model):
-        """Set the global model for the client."""
-        self._global_model = model
-    
-
-class NuClassifier(nn.Module):
-    def __init__(self, dev, input_shape=(3, 80, 45)):
-        super(NuClassifier, self).__init__()
-        log(INFO, f"NuClasssifier")
-        # Convs
-        self.conv1 = nn.Conv2d(3, 16, kernel_size=3, stride=2, padding=1)
-        self.conv2 = nn.Conv2d(16, 32, kernel_size=3, stride=2, padding=1)
-        
-        # figure out flatten size dynamically
-        with torch.no_grad():
-            dummy = torch.zeros(1, *input_shape)  # batch=1, shape=(3,80,45)
-            dummy_out = self._forward_convs(dummy)
-            flatten_dim = dummy_out.view(1, -1).size(1)
-        
-        # FC layers
-        self.fc1 = nn.Linear(flatten_dim, 64)
-        self.fc2 = nn.Linear(64, 10)
-
-        self.dropout = nn.Dropout(0.5)
-        self._dev = dev
-        self._global_model = None
-        self._run_mode = None
-
-    def _forward_convs(self, x):
-        x = F.relu(self.conv1(x))
-        x = F.max_pool2d(x, 2)
-        x = F.relu(self.conv2(x))
-        x = F.max_pool2d(x, 2)
-        return x
-
-    def forward(self, x):
-        x = self._forward_convs(x)
-        x = x.view(x.size(0), -1)
-        x = F.relu(self.fc1(x))
-        x = self.dropout(x)
-        x = self.fc2(x)
-        return x
-
-    def set_global_model(self, model):
-        """Set the global model for the client."""
-        self._global_model = model
-
-
-class TransferClassifier(nn.Module):
-    def __init__(self, dev, num_classes=10, freeze_backbone=True):
-        super(TransferClassifier, self).__init__()
-        self._dev = dev
-        model_path = "/app/models/mobilenet_v2-b0353104.pth"
-        # Load MobileNetV2 without downloading, load weights to CPU first
-        self.backbone = models.mobilenet_v2(weights=None)
-        state_dict = torch.load(model_path, map_location="cpu")
-        self.backbone.load_state_dict(state_dict)
-        if freeze_backbone:
-            for param in self.backbone.features.parameters():
-                param.requires_grad = False
-        in_features = self.backbone.classifier[1].in_features
-        self.backbone.classifier = nn.Sequential(
-            nn.Linear(in_features, 128),
-            nn.ReLU(),
-            nn.Dropout(0.4),
-            nn.Linear(128, num_classes)
-        )
-        # Move entire model to the target device
-        self.to(self._dev)
-        self._global_model = None
-        self._run_mode = None
-
-    def forward(self, x):
-        return self.backbone(x)
-
-    def set_global_model(self, model):
-        self._global_model = model
-
+import models as flwr_models    
+import load_data as flwr_data
 
 def train(net, trainloader, epochs: int, verbose=False, config=None):
     """Train the network on the training set."""
@@ -222,7 +31,9 @@ def train(net, trainloader, epochs: int, verbose=False, config=None):
     #     optimizer = torch.optim.SGD(net.parameters(), lr=config["eta_l"])
     # else:
     #     optimizer = torch.optim.Adam(net.parameters())
+    #optimizer = torch.optim.Adam(net.parameters(), lr=config["learning_rate"], weight_decay=1e-4)
     optimizer = torch.optim.Adam(net.parameters())
+    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', patience=2, factor=0.5)
     criterion = torch.nn.CrossEntropyLoss()
     net.train()
     for epoch in range(epochs):
@@ -254,44 +65,23 @@ def train(net, trainloader, epochs: int, verbose=False, config=None):
                         param.grad = custom_grad.clone().to(param.device)                      
 
             optimizer.step()
+            scheduler.step(loss)
             # Metrics
             epoch_loss += loss.item()
             total += labels.size(0)
             correct += (torch.max(outputs.data, 1)[1] == labels).sum().item()
         # normalize by number of samples seen (len(trainloader.dataset) might be large if split)
-        epoch_loss /= len(trainloader.dataset)
+        epoch_loss /= len(trainloader)
         epoch_acc = correct / total if total > 0 else 0.0
-        wandb.log({
-            "epoch": epoch,
-            "local_loss": epoch_loss,
-            "local_accuracy": epoch_acc
-        })
-        if verbose:
+        log(INFO, f"Training: Epoch {epoch+1}: train loss {epoch_loss}, accuracy {epoch_acc}")
+        if config["verbose"]:
+            wandb.log({
+                "epoch": epoch,
+                "local_loss": epoch_loss,
+                "local_accuracy": epoch_acc
+            })            
             log(INFO, f"Epoch {epoch+1}: train loss {epoch_loss}, accuracy {epoch_acc}")
 
-
-# def train(net, trainloader, epochs: int, verbose=False):
-#     """Train the network on the training set."""
-#     criterion = torch.nn.CrossEntropyLoss()
-#     optimizer = torch.optim.Adam(net.parameters())
-#     net.train()
-#     for epoch in range(epochs):
-#         correct, total, epoch_loss = 0, 0, 0.0
-#         for batch in trainloader:
-#             images, labels = batch[0].to(net._dev), batch[1].to(net._dev)
-#             optimizer.zero_grad()
-#             outputs = net(images)        
-#             loss = criterion(outputs, labels)
-#             loss.backward()
-#             optimizer.step()
-#             # Metrics
-#             epoch_loss += loss
-#             total += labels.size(0)
-#             correct += (torch.max(outputs.data, 1)[1] == labels).sum().item()
-#         epoch_loss /= len(trainloader.dataset)
-#         epoch_acc = correct / total
-#         if verbose:
-#             log(INFO, f"Epoch {epoch+1}: train loss {epoch_loss}, accuracy {epoch_acc}")
 
 def test(net, testloader):
     """Evaluate the network on the entire test set."""
@@ -309,41 +99,22 @@ def test(net, testloader):
     # normalize by number of samples
     loss /= len(testloader.dataset)
     accuracy = correct / total if total > 0 else 0.0
+    log(INFO, f"Validation: val loss {loss}, accuracy {accuracy}")
     return loss, accuracy
 
-def set_parameters(net, parameters: List[np.ndarray]):
-    params_dict = zip(net.state_dict().keys(), parameters)
-    state_dict = OrderedDict({k: torch.Tensor(v) for k, v in params_dict})
-    net.load_state_dict(state_dict, strict=True)
-
-def get_parameters(net) -> List[np.ndarray]:
-    return [val.cpu().numpy() for _, val in net.state_dict().items()]
-
-def get_head_parameters(model):
-    return [val.cpu().numpy() for _, val in model.backbone.classifier.state_dict().items()]
-
-def set_head_parameters(model, parameters):
-    state_dict = model.backbone.classifier.state_dict()
-    # create tensors on CPU then move to model device when loading
-    new_state_dict = {k: torch.tensor(v) for k, v in zip(state_dict.keys(), parameters)}
-    # cast tensors to the model device
-    new_state_dict = {k: v.to(model._dev) for k, v in new_state_dict.items()}
-    model.backbone.classifier.load_state_dict(new_state_dict)
-
 class FlowerClient(fl.client.NumPyClient):
-    def __init__(self, net, trainloader, valloader, epochs, learning_rate):
+    def __init__(self, net, trainloader, valloader, epochs, learning_rate, verbose=True):
         self.net = net
         self.trainloader = trainloader
         self.valloader = valloader
         self.epochs = epochs
         self.learning_rate = learning_rate
+        self.verbose = verbose
 
     def get_parameters(self, config):
-        return get_head_parameters(self.net)
-        # return get_parameters(self.net)
+        return self.net.get_parameters()
 
     def fit(self, parameters, config):
-        #self.net.set_global_model(parameters)
         if 'proximal_mu' in config.keys():
             log(INFO, f"Using run mode: fedprox")
             self.net.set_global_model(parameters)
@@ -361,22 +132,16 @@ class FlowerClient(fl.client.NumPyClient):
         else:
             log(INFO, f"Using run mode: default")
             self.net._run_mode = "default"
-        # set_parameters(self.net, parameters)
-        set_head_parameters(self.net, parameters)
-        #pairs = [{"weight1": w1.detach().numpy(), "weight2": w2} for w1, w2 in zip(net.parameters(), parameters)]
-        #log(DEBUG, f"possible input: {pairs}")
+        self.net.set_parameters(parameters)
         if self.learning_rate != 0:
             config["eta_l"] = self.learning_rate
-        #train(self.net, self.trainloader, epochs=self.epochs, verbose=True, config=config)
+        config = {**config, "learning_rate": self.learning_rate, "verbose": self.verbose}
         train(self.net, self.trainloader, epochs=self.epochs, verbose=True, config=config)
-        #return get_parameters(self.net), len(self.trainloader), {}
-        return get_head_parameters(self.net), len(self.trainloader), {}
+        return self.net.get_parameters(), len(self.trainloader), {}
 
     def evaluate(self, parameters, config):
-        # set_parameters(self.net, parameters)
-        set_head_parameters(self.net, parameters)
+        self.net.set_parameters(parameters)
         loss, accuracy = test(self.net, self.valloader)
-        #self.logger.info("accuracy: "+ str(float(accuracy)))        
         return float(loss), len(self.valloader), {"accuracy": float(accuracy)}    
 
 class DummyClient(fl.client.NumPyClient):
@@ -388,16 +153,14 @@ class DummyClient(fl.client.NumPyClient):
         self.lr = lr
 
     def get_parameters(self, config):
-        return get_parameters(self.net)
+        return self.net.get_parameters()
 
     def fit(self, parameters, config):
-
-        return get_parameters(self.net), len(self.trainloader), {}
+        return self.net.get_parameters(), len(self.trainloader), {}
 
     def evaluate(self, parameters, config):
-        set_parameters(self.net, parameters)
+        self.net.set_parameters(parameters)
         loss, accuracy = test(self.net, self.valloader)
-        #self.logger.info("accuracy: "+ str(float(accuracy)))
         return float(loss), len(self.valloader), {"accuracy": float(accuracy)}  
 
 def init_client():
@@ -436,7 +199,26 @@ def init_client():
         '--strategy', type=str, default=config.get("strategy", {}).get("name", "FedAvg"),
         help="Federated learning strategy to use (FedAvg, FedProx, etc.). Gets from configfile. If not defined there, defaults to FedAvg.",
     )    
-
+    parser.add_argument(
+        '--classifier', type=str, default=config.get("classifier", "TransferClassifier"), # TODO update config files accordingly (TransferClassifier or LightweightClassifier)
+        help="Classifier to use. Gets from configfile. If not defined there, defaults to TransferClassifier (MobileNetV2), which is loaded from /app/models.",
+    )
+    parser.add_argument(
+        '--input_image_width', type=int, default=config.get("input_image_width", 80),
+        help="Input image width. Gets from configfile. If not defined there, defaults to 80.",
+    )
+    parser.add_argument(
+        '--input_image_height', type=int, default=config.get("input_image_height", 45),
+        help="Input image height. Gets from configfile. If not defined there, defaults to 45.",
+    )
+    parser.add_argument(
+        '--num_classes', type=int, default=config.get("num_classes", 4),
+        help="Number of output classes. Gets from configfile. If not defined there, defaults to 4.",
+    )
+    parser.add_argument(
+        '--not_model_checkpoint', help="Don't use model checkpoint. Start training from scratch",
+        action='store_true'
+    )
     args = parser.parse_args()
     return args
     
@@ -462,9 +244,9 @@ if __name__ == "__main__":
     if torch.cuda.is_available():
         log(INFO, "CUDA is available. Using GPU.")
     DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    # pick loaders and model (your original choice)
-    trainloader, valloader = load_nu(args.batch_size, args.num, args.start_clients+1)
-    net = TransferClassifier(DEVICE).to(DEVICE)
+    trainloader, valloader = flwr_data.load_nu(args.batch_size, args.num, args.start_clients+1, width=args.input_image_width, height=args.input_image_height)
+    net_class = getattr(flwr_models, args.classifier)
+    net = net_class(DEVICE, checkpoint=not args.not_model_checkpoint, input_shape=(3, args.input_image_height, args.input_image_width), num_classes=args.num_classes)
 
     if args.noise:
         flwr_client = DummyClient(net, trainloader, valloader, args.epochs, args.learning_rate).to_client()        
