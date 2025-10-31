@@ -8,7 +8,7 @@ import numpy as np
 from collections import OrderedDict
 from typing import List, Tuple, Dict, Optional
 from torchvision.models import MobileNet_V2_Weights
-from ultralytics import YOLO  
+#from ultralytics import YOLO  
 
 class LightweightClassifier(nn.Module):
     def __init__(self, dev, checkpoint=False, input_shape=(3, 80, 45), output_dim=4):
@@ -77,16 +77,39 @@ class TransferClassifier(nn.Module):
             #self.backbone.load_state_dict(backbone_weights)
 
             self.backbone = models.mobilenet_v2(weights=MobileNet_V2_Weights.IMAGENET1K_V1)
-            if freeze_backbone:
-                for param in self.backbone.features.parameters():
-                    param.requires_grad = False
+            # if freeze_backbone:
+            #     for param in self.backbone.features.parameters():
+            #         param.requires_grad = False
+            n_unfreeze = 3
+            for param in list(self.backbone.features.parameters())[:-n_unfreeze]:
+                param.requires_grad = False
+
+            log(INFO, f"Unfroze last {n_unfreeze} layers for fine-tuning.")
+
+            # Alternatively, full unfreeze if dataset is very different
+            # for param in self.backbone.features.parameters():
+            #     param.requires_grad = True                 
+            # if freeze_backbone:
+            #     for param in self.backbone.features.parameters():
+            #         param.requires_grad = False
             in_features = self.backbone.classifier[1].in_features
+            # self.backbone.classifier = nn.Sequential(
+            #     nn.Linear(in_features, 128),
+            #     nn.ReLU(),
+            #     nn.Dropout(0.4),
+            #     nn.Linear(128, num_classes)
+            # )            
             self.backbone.classifier = nn.Sequential(
-                nn.Linear(in_features, 128),
+                nn.Linear(in_features, 256),
+                nn.BatchNorm1d(256),
                 nn.ReLU(),
                 nn.Dropout(0.4),
+                nn.Linear(256, 128),
+                nn.BatchNorm1d(128),
+                nn.ReLU(),
+                nn.Dropout(0.3),
                 nn.Linear(128, num_classes)
-            )            
+            )
         self.to(self._dev)
         self._global_model = None
         self._run_mode = None
@@ -96,6 +119,30 @@ class TransferClassifier(nn.Module):
 
     def set_global_model(self, model):
         self._global_model = model
+
+    # def get_parameters(self):
+    #     params = []
+    #     for name, param in self.state_dict().items():
+    #         # Only include params that require grad (unfrozen layers)
+    #         module_param = dict(self.named_parameters()).get(name, None)
+    #         if module_param is None or not module_param.requires_grad:
+    #             continue
+    #         params.append(param.cpu().numpy())
+    #     return params
+
+    # def set_parameters(self, parameters):
+    #     # Create a mapping of all trainable parameters
+    #     trainable_keys = [name for name, param in self.named_parameters() if param.requires_grad]
+
+    #     if len(parameters) != len(trainable_keys):
+    #         raise ValueError(f"Parameter count mismatch: got {len(parameters)} values but model has {len(trainable_keys)} trainable parameters")
+
+    #     # Load weights into corresponding trainable parameters
+    #     current_state_dict = self.state_dict()
+    #     for key, value in zip(trainable_keys, parameters):
+    #         current_state_dict[key] = torch.tensor(value).to(self._dev)
+
+    #     self.load_state_dict(current_state_dict, strict=False)
 
     def get_parameters(self):
         return [val.cpu().numpy() for _, val in self.backbone.classifier.state_dict().items()]
@@ -107,88 +154,88 @@ class TransferClassifier(nn.Module):
         self.backbone.classifier.load_state_dict(new_state_dict)        
 
 
-class TransferYoloClassifier(nn.Module):
-    def __init__(self, dev, checkpoint=False, input_shape=(3, 80, 80), num_classes=4, freeze_backbone=True):
-        super(TransferYoloClassifier, self).__init__()
-        self._dev = dev
+# class TransferYoloClassifier(nn.Module):
+#     def __init__(self, dev, checkpoint=False, input_shape=(3, 80, 80), num_classes=4, freeze_backbone=True):
+#         super(TransferYoloClassifier, self).__init__()
+#         self._dev = dev
 
-        if checkpoint:
-            log(INFO, f"TransferYoloClassifier with checkpoint")
-            model_path = "/app/models/TransferYoloClassifier.pt"
-            state_dict = torch.load(model_path, map_location="cpu")
-            self.load_state_dict(state_dict)
-        else:
-            log(INFO, f"TransferYoloClassifier from scratch")
+#         if checkpoint:
+#             log(INFO, f"TransferYoloClassifier with checkpoint")
+#             model_path = "/app/models/TransferYoloClassifier.pt"
+#             state_dict = torch.load(model_path, map_location="cpu")
+#             self.load_state_dict(state_dict)
+#         else:
+#             log(INFO, f"TransferYoloClassifier from scratch")
 
-            # # --- Load YOLOv5 backbone using torch.hub ---
-            # self.yolo = YOLO("yolo11n.pt").model
-            # log(INFO, f"Loaded YOLOv5 backbone")
+#             # # --- Load YOLOv5 backbone using torch.hub ---
+#             # self.yolo = YOLO("yolo11n.pt").model
+#             # log(INFO, f"Loaded YOLOv5 backbone")
 
-            # # --- Keep only the feature extractor (exclude YOLO detection head) ---
-            # self.backbone = nn.Sequential(*list(self.yolo.model.children())[:-1])
+#             # # --- Keep only the feature extractor (exclude YOLO detection head) ---
+#             # self.backbone = nn.Sequential(*list(self.yolo.model.children())[:-1])
 
-            # # --- Optionally freeze the backbone ---
-            # if freeze_backbone:
-            #     for param in self.backbone.parameters():
-            #         param.requires_grad = False
-            #     log(INFO, "YOLO backbone frozen")
+#             # # --- Optionally freeze the backbone ---
+#             # if freeze_backbone:
+#             #     for param in self.backbone.parameters():
+#             #         param.requires_grad = False
+#             #     log(INFO, "YOLO backbone frozen")
 
-            # # --- Determine flattened feature size dynamically ---
-            # dummy = torch.randn(1, *input_shape)
-            # with torch.no_grad():
-            #     features = self.backbone(dummy)
-            #     if isinstance(features, (list, tuple)):
-            #         features = features[-1]
-            #     feature_dim = features.shape[1] * features.shape[2] * features.shape[3]
+#             # # --- Determine flattened feature size dynamically ---
+#             # dummy = torch.randn(1, *input_shape)
+#             # with torch.no_grad():
+#             #     features = self.backbone(dummy)
+#             #     if isinstance(features, (list, tuple)):
+#             #         features = features[-1]
+#             #     feature_dim = features.shape[1] * features.shape[2] * features.shape[3]
 
-            # log(INFO, f"YOLO feature dimension: {feature_dim}")
+#             # log(INFO, f"YOLO feature dimension: {feature_dim}")
 
-            # # --- Define classifier head ---
-            # self.classifier = nn.Sequential(
-            #     nn.Flatten(),
-            #     nn.Linear(feature_dim, 512),
-            #     nn.ReLU(),
-            #     nn.Dropout(0.5),
-            #     nn.Linear(512, 128),
-            #     nn.ReLU(),
-            #     nn.Dropout(0.4),
-            #     nn.Linear(128, num_classes)
-            # )
+#             # # --- Define classifier head ---
+#             # self.classifier = nn.Sequential(
+#             #     nn.Flatten(),
+#             #     nn.Linear(feature_dim, 512),
+#             #     nn.ReLU(),
+#             #     nn.Dropout(0.5),
+#             #     nn.Linear(512, 128),
+#             #     nn.ReLU(),
+#             #     nn.Dropout(0.4),
+#             #     nn.Linear(128, num_classes)
+#             # )
 
-            base_yolo = YOLO('yolov8n.pt')
+#             base_yolo = YOLO('yolov8n.pt')
 
-            # Take only the backbone and neck (all before the Detect layer)
-            self.backbone = nn.Sequential(*list(base_yolo.model.model.children())[:-1])
+#             # Take only the backbone and neck (all before the Detect layer)
+#             self.backbone = nn.Sequential(*list(base_yolo.model.model.children())[:-1])
 
-            # Add a global average pooling + classification head
-            self.classifier = nn.Sequential(
-                nn.AdaptiveAvgPool2d(1),
-                nn.Flatten(),
-                nn.Linear(256, num_classes)  # 256 = last feature depth in your model
-            )
+#             # Add a global average pooling + classification head
+#             self.classifier = nn.Sequential(
+#                 nn.AdaptiveAvgPool2d(1),
+#                 nn.Flatten(),
+#                 nn.Linear(256, num_classes)  # 256 = last feature depth in your model
+#             )
 
 
-        self.to(self._dev)
-        self._global_model = None
-        self._run_mode = None
+#         self.to(self._dev)
+#         self._global_model = None
+#         self._run_mode = None
 
-    def forward(self, x):
-        x = self.backbone(x)
-        if isinstance(x, (list, tuple)):
-            x = x[-1]
-        x = self.classifier(x)
-        return x
+#     def forward(self, x):
+#         x = self.backbone(x)
+#         if isinstance(x, (list, tuple)):
+#             x = x[-1]
+#         x = self.classifier(x)
+#         return x
 
-    def set_global_model(self, model):
-        self._global_model = model
+#     def set_global_model(self, model):
+#         self._global_model = model
 
-    def get_parameters(self):
-        # Return only classifier weights for federated learning
-        return [val.cpu().numpy() for _, val in self.classifier.state_dict().items()]
+#     def get_parameters(self):
+#         # Return only classifier weights for federated learning
+#         return [val.cpu().numpy() for _, val in self.classifier.state_dict().items()]
 
-    def set_parameters(self, parameters):
-        # Update classifier weights only
-        state_dict = self.classifier.state_dict()
-        new_state_dict = {k: torch.tensor(v) for k, v in zip(state_dict.keys(), parameters)}
-        new_state_dict = {k: v.to(self._dev) for k, v in new_state_dict.items()}
-        self.classifier.load_state_dict(new_state_dict)
+#     def set_parameters(self, parameters):
+#         # Update classifier weights only
+#         state_dict = self.classifier.state_dict()
+#         new_state_dict = {k: torch.tensor(v) for k, v in zip(state_dict.keys(), parameters)}
+#         new_state_dict = {k: v.to(self._dev) for k, v in new_state_dict.items()}
+#         self.classifier.load_state_dict(new_state_dict)

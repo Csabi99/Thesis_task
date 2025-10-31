@@ -24,63 +24,97 @@ import wandb
 import models as flwr_models    
 import load_data as flwr_data
 
-def train(net, trainloader, epochs: int, verbose=False, config=None):
-    """Train the network on the training set."""
-    # if net._run_mode == "fedcm":
-    #     #https://pytorch.org/docs/stable/generated/torch.optim.SGD.html - based on this
-    #     optimizer = torch.optim.SGD(net.parameters(), lr=config["eta_l"])
-    # else:
-    #     optimizer = torch.optim.Adam(net.parameters())
-    #optimizer = torch.optim.Adam(net.parameters(), lr=config["learning_rate"], weight_decay=1e-4)
+def train(net, trainloader, epochs: int, verbose=False, config=None, valloader=None):
+    """Train the network on the training set with optional LR scheduling."""
     optimizer = torch.optim.Adam(net.parameters())
-    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', patience=2, factor=0.5)
+    # optimizer = torch.optim.Adam(net.parameters(), lr=config.get("learning_rate", 1e-3))
+    # scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+    #     optimizer,
+    #     mode='min',
+    #     patience=3,
+    #     factor=0.5,
+    #     min_lr=1e-6  # prevents learning rate from vanishing
+    # )
     criterion = torch.nn.CrossEntropyLoss()
     net.train()
+
     for epoch in range(epochs):
         correct, total, epoch_loss = 0, 0, 0.0
-        for batch in trainloader:
-            images, labels = batch[0].to(net._dev), batch[1].to(net._dev)
+
+        for images, labels in trainloader:
+            images, labels = images.to(net._dev), labels.to(net._dev)
             optimizer.zero_grad()
             outputs = net(images)
+
+            # Handle FedProx loss
             if net._run_mode == "fedprox":
                 proximal_term = 0.0
-                # net._global_model expected as list of numpy arrays or CPU tensors
                 for local_weights, global_weights in zip(net.parameters(), net._global_model):
                     local_np = local_weights.detach().cpu().numpy()
                     global_np = global_weights if isinstance(global_weights, np.ndarray) else np.array(global_weights)
-                    current = np.linalg.norm((local_np - global_np))**2
-                    proximal_term += current
+                    proximal_term += np.linalg.norm(local_np - global_np) ** 2
                 loss = criterion(outputs, labels) + (config["proximal_mu"] / 2) * proximal_term
             else:
                 loss = criterion(outputs, labels)
+
             loss.backward()
+
             if net._run_mode == "fedcm":
                 with torch.no_grad():
-                    g = [param.grad for param in net.parameters() if param.grad is not None]
-                    if config.get("gradient", None) is None:
-                        new_g = g
+                    grads = [p.grad for p in net.parameters() if p.grad is not None]
+                    if config.get("gradient") is None:
+                        new_grads = grads
                     else:
-                        new_g = [config["decay_alfa"] * _g + (1-config["decay_alfa"]) * dt for dt, _g in zip(config["gradient"], g)]
-                    for param, custom_grad in zip(net.parameters(), new_g):
-                        param.grad = custom_grad.clone().to(param.device)                      
+                        new_grads = [
+                            config["decay_alfa"] * g + (1 - config["decay_alfa"]) * old
+                            for old, g in zip(config["gradient"], grads)
+                        ]
+                    for param, g in zip(net.parameters(), new_grads):
+                        param.grad = g.clone().to(param.device)
 
             optimizer.step()
-            scheduler.step(loss)
+
             # Metrics
             epoch_loss += loss.item()
             total += labels.size(0)
             correct += (torch.max(outputs.data, 1)[1] == labels).sum().item()
-        # normalize by number of samples seen (len(trainloader.dataset) might be large if split)
+
+        # --- End of epoch ---
         epoch_loss /= len(trainloader)
         epoch_acc = correct / total if total > 0 else 0.0
-        log(INFO, f"Training: Epoch {epoch+1}: train loss {epoch_loss}, accuracy {epoch_acc}")
-        if config["verbose"]:
+        val_loss = 0.0
+        accuracy = 0.0
+        # Optional validation loss for scheduler
+        if valloader is not None:
+            net.eval()
+            
+            with torch.no_grad():
+                for images, labels in valloader:
+                    images, labels = images.to(net._dev), labels.to(net._dev)
+                    outputs = net(images)
+                    val_loss += criterion(outputs, labels).item()
+                    _, predicted = torch.max(outputs.data, 1)
+                    total += labels.size(0)
+                    correct += (predicted == labels).sum().item()                    
+            val_loss /= len(valloader)
+            #scheduler.step(val_loss)
+            net.train()
+            accuracy = correct / total if total > 0 else 0.0            
+        #else:
+            #scheduler.step(epoch_loss)
+
+        log(INFO, f"Epoch {epoch+1}: train loss {epoch_loss:.4f}, acc {epoch_acc:.3f}, lr {optimizer.param_groups[0]['lr']:.6f}")
+        if valloader is not None:
+            log(INFO, f"           val loss {val_loss:.4f}, acc {accuracy:.3f}")
+
+        if config.get("verbose", False):
             wandb.log({
-                "epoch": epoch,
-                "local_loss": epoch_loss,
-                "local_accuracy": epoch_acc
-            })            
-            log(INFO, f"Epoch {epoch+1}: train loss {epoch_loss}, accuracy {epoch_acc}")
+                "epoch": epoch + 1,
+                "train_loss": epoch_loss,
+                "train_acc": epoch_acc,
+                "lr": optimizer.param_groups[0]['lr']
+            })
+
 
 
 def test(net, testloader):
@@ -136,7 +170,7 @@ class FlowerClient(fl.client.NumPyClient):
         if self.learning_rate != 0:
             config["eta_l"] = self.learning_rate
         config = {**config, "learning_rate": self.learning_rate, "verbose": self.verbose}
-        train(self.net, self.trainloader, epochs=self.epochs, verbose=True, config=config)
+        train(self.net, self.trainloader, epochs=self.epochs, verbose=True, config=config, valloader=self.valloader)
         return self.net.get_parameters(), len(self.trainloader), {}
 
     def evaluate(self, parameters, config):
@@ -246,7 +280,8 @@ if __name__ == "__main__":
     DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     trainloader, valloader = flwr_data.load_nu(args.batch_size, args.num, args.start_clients+1, width=args.input_image_width, height=args.input_image_height)
     net_class = getattr(flwr_models, args.classifier)
-    net = net_class(DEVICE, checkpoint=not args.not_model_checkpoint, input_shape=(3, args.input_image_height, args.input_image_width), num_classes=args.num_classes)
+    #net = net_class(DEVICE, checkpoint=not args.not_model_checkpoint, input_shape=(3, args.input_image_height, args.input_image_width), num_classes=args.num_classes)
+    net = net_class(DEVICE, checkpoint=args.not_model_checkpoint, input_shape=(3, args.input_image_height, args.input_image_width), num_classes=args.num_classes)
 
     if args.noise:
         flwr_client = DummyClient(net, trainloader, valloader, args.epochs, args.learning_rate).to_client()        

@@ -1,4 +1,4 @@
-from models import TransferClassifier, LightweightClassifier, TransferYoloClassifier
+from models import TransferClassifier, LightweightClassifier
 from load_data import load_nu, load_cifar10 as load_cifar
 from client import FlowerClient
 import torch
@@ -10,20 +10,20 @@ import datetime
 
 
 if __name__ == "__main__":
-    fl.common.logger.configure(identifier=f"Base_Model", filename=f"/app/logs/Base_Model.txt")
+    #fl.common.logger.configure(identifier=f"Base_Model", filename=f"/app/logs/Base_Model.txt")
     start_time = datetime.datetime.now()
     log(INFO, f"{start_time}: Script started")
     num = 1
-    epochs = 2
+    epochs = 300
     batch_size = 32
     DEVICE = torch.device("cpu")
-    trainloader, valloader = load_nu(batch_size, num, 32, federated=True)
-    net = TransferClassifier(DEVICE, input_shape=(3, 120, 120), num_classes=4, freeze_backbone=True)
-    #net = LightweightClassifier(DEVICE, input_shape=(3, 80, 80), output_dim=4)
+    trainloader, valloader = load_nu(batch_size, num, 32, federated=False)
+    net = TransferClassifier(DEVICE, input_shape=(3, 80, 45), num_classes=4, freeze_backbone=True)
+    #net = LightweightClassifier(DEVICE, input_shape=(3, 120, 120), output_dim=4)
     client = FlowerClient(net, trainloader, valloader, epochs, 0.001, False)
     losses = []
     accuracies = []
-    for i in range(50):
+    for i in range(1):
         client.fit(client.get_parameters({}), {})
         loss, val_len, accuracy = client.evaluate(client.get_parameters({}), {})
         losses.append(loss)

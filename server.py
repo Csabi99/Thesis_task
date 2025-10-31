@@ -110,12 +110,21 @@ def transfer_evaluate(
     parameters,
     config):
     DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    net = TransferClassifier(DEVICE, checkpoint=True)
+    net = TransferClassifier(DEVICE, checkpoint=False)
     trainloader, valloader = flwr_data.load_nu(32, 0, args.start_clients+1)
-    net.set_head_parameters(parameters)  # Update model with the latest parameters
-    model_path = "/app/logs/global_transfer_model.pt"
-    torch.save(net.state_dict(), model_path)
+    net.set_parameters(parameters)  # Update model with the latest parameters
     loss, accuracy = test(net, valloader)
+    # with using config (to get global model accuracy) it doesnt really work, so probably I have to save it in a separate file
+    fname = "/app/logs/global_accuracy.txt"
+    load_model = True
+    if os.path.isfile(fname):
+        with open(fname, "r") as f:
+            global_accuracy = f.read().strip()
+            if float(global_accuracy) >= accuracy:
+                load_model = False
+    if load_model:                
+        model_path = "/app/logs/global_transfer_model.pt"
+        torch.save(net.state_dict(), model_path)
     print(f"Server-side evaluation loss {loss} / accuracy {accuracy}")
     wandb.log({
         "round": server_round,
@@ -132,9 +141,17 @@ def lightweight_evaluate(
     net = LightweightClassifier(DEVICE)
     trainloader, valloader = flwr_data.load_nu(32, 0, args.start_clients+1)
     net.set_head_parameters(parameters)  # Update model with the latest parameters
-    model_path = "/app/logs/global_lightweight_model.pt"
-    torch.save(net.state_dict(), model_path)
     loss, accuracy = test(net, valloader)
+    fname = "/app/logs/global_accuracy.txt"
+    load_model = True
+    if os.path.isfile(fname):
+        with open(fname, "r") as f:
+            global_accuracy = f.read().strip()
+            if float(global_accuracy) >= accuracy:
+                load_model = False
+    if load_model:                
+        model_path = "/app/logs/global_transfer_model.pt"
+        torch.save(net.state_dict(), model_path)    
     print(f"Server-side evaluation loss {loss} / accuracy {accuracy}")
     wandb.log({
         "round": server_round,

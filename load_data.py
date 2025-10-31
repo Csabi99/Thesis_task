@@ -14,20 +14,18 @@ class NuImageDataset(Dataset):
     def __init__(self, img_dir, width, height, is_test: bool = False):
         self.img_dir = img_dir
         # self.transform = transforms.Compose([
-        #     #transforms.Resize(size=(width, height)),  # Resize images to 80x45 pixels
-        #     transforms.Resize(size=(80, 80)),  # Resize images to 80x45 pixels
-        #     transforms.RandomHorizontalFlip(p=0.5),  # Randomly flip images horizontally with a probability of 50%
-        #     transforms.RandomRotation(degrees=15),  # Randomly rotate images within ±15 degrees
-        #     transforms.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2, hue=0.1),  # Randomly adjust color properties
-        #     #transforms.ToTensor(),  # Convert PIL images to PyTorch tensors
         #     transforms.ConvertImageDtype(torch.float32),
-        #     #transforms.Lambda(lambda x: x / 255.0),
+        #     transforms.RandomResizedCrop(size=(120, 120), scale=(0.6, 1.0), ratio=(0.8, 1.2)),
+        #     transforms.RandomHorizontalFlip(p=0.5),
+        #     transforms.RandomRotation(degrees=15),
+        #     transforms.ColorJitter(brightness=0.3, contrast=0.3, saturation=0.3, hue=0.1),
+        #     transforms.RandomErasing(p=0.25, scale=(0.02, 0.15)),
         #     transforms.Normalize(mean=[0.485, 0.456, 0.406],
-        #                             std=[0.229, 0.224, 0.225])                   
+        #                         std=[0.229, 0.224, 0.225])
         # ])
         self.transform = transforms.Compose([
             transforms.ConvertImageDtype(torch.float32),  # convert first -> values in [0,1]
-            transforms.Resize(size=(120, 120)),
+            transforms.Resize(size=(160, 90)),
             transforms.RandomHorizontalFlip(p=0.5),
             transforms.RandomRotation(degrees=15),
             transforms.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2, hue=0.1),
@@ -46,7 +44,7 @@ class NuImageDataset(Dataset):
         self.test_transform = transforms.Compose([
             transforms.ConvertImageDtype(torch.float32),
             #transforms.Resize(size=(width, height)),  # Resize images to 80x45 pixels
-            transforms.Resize(size=(120, 120)),  # Resize images to 80x45 pixels
+            transforms.Resize(size=(160, 90)),  # Resize images to 80x45 pixels
             #transforms.ToTensor(),  # Convert PIL images to PyTorch tensors
             #transforms.Lambda(lambda x: x / 255.0),
             transforms.Normalize(mean=[0.485, 0.456, 0.406],
