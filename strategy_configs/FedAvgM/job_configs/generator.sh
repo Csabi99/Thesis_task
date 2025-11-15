@@ -1,4 +1,4 @@
-for i in {1..32}
+for i in {1..2}
 do
 cat <<EOF > client-job-$i.yaml
 apiVersion: batch/v1

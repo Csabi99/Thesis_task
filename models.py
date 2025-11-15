@@ -11,7 +11,7 @@ from torchvision.models import MobileNet_V2_Weights
 #from ultralytics import YOLO  
 
 class LightweightClassifier(nn.Module):
-    def __init__(self, dev, checkpoint=False, input_shape=(3, 80, 45), output_dim=4):
+    def __init__(self, dev, checkpoint=False, input_shape=(3, 80, 45), num_classes=4):
         super(LightweightClassifier, self).__init__()
         if checkpoint:
             log(INFO, f"LightweightClassifier should be used with checkpoint, but it is not implemented yet.    ")
@@ -27,7 +27,7 @@ class LightweightClassifier(nn.Module):
         
         # FC layers
         self.fc1 = nn.Linear(flatten_dim, 64)
-        self.fc2 = nn.Linear(64, output_dim)
+        self.fc2 = nn.Linear(64, num_classes)
 
         self.dropout = nn.Dropout(0.5)
         self._dev = dev
@@ -60,6 +60,63 @@ class LightweightClassifier(nn.Module):
 
     def get_parameters(self) -> List[np.ndarray]:
         return [val.cpu().numpy() for _, val in self.state_dict().items()]        
+
+class TinyClassifier(nn.Module):
+    def __init__(self, dev, checkpoint=False, input_shape=(3, 80, 45), num_classes=4):
+        super().__init__() 
+        self.features = nn.Sequential(
+            nn.Conv2d(3, 32, 3, stride=1, padding=1),
+            nn.ReLU(),
+            nn.Conv2d(32, 64, 3, stride=2, padding=1),
+            nn.BatchNorm2d(64),
+            nn.ReLU(),
+            nn.Conv2d(64, 128, 3, stride=2, padding=1),
+            nn.BatchNorm2d(128),
+            nn.ReLU(),
+            nn.AdaptiveAvgPool2d((5, 3))
+        )
+
+        with torch.no_grad():
+            dummy = torch.zeros(1, *input_shape)
+            flatten_dim = self.features(dummy).view(1, -1).size(1)
+
+        self.classifier = nn.Sequential(
+            nn.Linear(flatten_dim, 128),
+            nn.ReLU(),
+            nn.Dropout(0.5),
+            nn.Linear(128, num_classes)
+        )
+        self._dev = dev
+        self._global_model = None
+        self._run_mode = None        
+        if checkpoint:
+            log(INFO, f"TinyClassifier with checkpoint")
+            model_path = "/app/models/global_tiny_model.pt"
+            state_dict = torch.load(model_path, map_location="cpu")
+            self.load_state_dict(state_dict)
+        else:
+            log(INFO, f"TinyClassifier from scratch")               
+
+    def forward(self, x):
+        x = self.features(x)
+        x = x.view(x.size(0), -1)
+        return self.classifier(x)
+    
+    # --- Flower FL utilities ---
+    def set_global_model(self, model):
+        """Optionally store global model for comparison or distillation."""
+        self._global_model = model
+
+    def set_parameters(self, parameters: List[np.ndarray]):
+        """Load model weights from numpy arrays (from Flower server)."""
+        params_dict = zip(self.state_dict().keys(), parameters)
+        state_dict = OrderedDict({k: torch.tensor(v) for k, v in params_dict})
+        self.load_state_dict(state_dict, strict=True)
+
+    def get_parameters(self) -> List[np.ndarray]:
+        """Return model weights as a list of numpy arrays."""
+        return [val.cpu().numpy() for _, val in self.state_dict().items()]
+
 
 
 class TransferClassifier(nn.Module):
@@ -120,38 +177,38 @@ class TransferClassifier(nn.Module):
     def set_global_model(self, model):
         self._global_model = model
 
-    # def get_parameters(self):
-    #     params = []
-    #     for name, param in self.state_dict().items():
-    #         # Only include params that require grad (unfrozen layers)
-    #         module_param = dict(self.named_parameters()).get(name, None)
-    #         if module_param is None or not module_param.requires_grad:
-    #             continue
-    #         params.append(param.cpu().numpy())
-    #     return params
-
-    # def set_parameters(self, parameters):
-    #     # Create a mapping of all trainable parameters
-    #     trainable_keys = [name for name, param in self.named_parameters() if param.requires_grad]
-
-    #     if len(parameters) != len(trainable_keys):
-    #         raise ValueError(f"Parameter count mismatch: got {len(parameters)} values but model has {len(trainable_keys)} trainable parameters")
-
-    #     # Load weights into corresponding trainable parameters
-    #     current_state_dict = self.state_dict()
-    #     for key, value in zip(trainable_keys, parameters):
-    #         current_state_dict[key] = torch.tensor(value).to(self._dev)
-
-    #     self.load_state_dict(current_state_dict, strict=False)
-
     def get_parameters(self):
-        return [val.cpu().numpy() for _, val in self.backbone.classifier.state_dict().items()]
+        params = []
+        for name, param in self.state_dict().items():
+            # Only include params that require grad (unfrozen layers)
+            module_param = dict(self.named_parameters()).get(name, None)
+            if module_param is None or not module_param.requires_grad:
+                continue
+            params.append(param.cpu().numpy())
+        return params
 
     def set_parameters(self, parameters):
-        state_dict = self.backbone.classifier.state_dict()
-        new_state_dict = {k: torch.tensor(v) for k, v in zip(state_dict.keys(), parameters)}
-        new_state_dict = {k: v.to(self._dev) for k, v in new_state_dict.items()}
-        self.backbone.classifier.load_state_dict(new_state_dict)        
+        # Create a mapping of all trainable parameters
+        trainable_keys = [name for name, param in self.named_parameters() if param.requires_grad]
+
+        if len(parameters) != len(trainable_keys):
+            raise ValueError(f"Parameter count mismatch: got {len(parameters)} values but model has {len(trainable_keys)} trainable parameters")
+
+        # Load weights into corresponding trainable parameters
+        current_state_dict = self.state_dict()
+        for key, value in zip(trainable_keys, parameters):
+            current_state_dict[key] = torch.tensor(value).to(self._dev)
+
+        self.load_state_dict(current_state_dict, strict=False)
+
+    # def get_parameters(self):
+    #     return [val.cpu().numpy() for _, val in self.backbone.classifier.state_dict().items()]
+
+    # def set_parameters(self, parameters):
+    #     state_dict = self.backbone.classifier.state_dict()
+    #     new_state_dict = {k: torch.tensor(v) for k, v in zip(state_dict.keys(), parameters)}
+    #     new_state_dict = {k: v.to(self._dev) for k, v in new_state_dict.items()}
+    #     self.backbone.classifier.load_state_dict(new_state_dict)        
 
 
 # class TransferYoloClassifier(nn.Module):

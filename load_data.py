@@ -25,7 +25,7 @@ class NuImageDataset(Dataset):
         # ])
         self.transform = transforms.Compose([
             transforms.ConvertImageDtype(torch.float32),  # convert first -> values in [0,1]
-            transforms.Resize(size=(160, 90)),
+            transforms.Resize(size=(80, 45)),
             transforms.RandomHorizontalFlip(p=0.5),
             transforms.RandomRotation(degrees=15),
             transforms.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2, hue=0.1),
@@ -44,7 +44,7 @@ class NuImageDataset(Dataset):
         self.test_transform = transforms.Compose([
             transforms.ConvertImageDtype(torch.float32),
             #transforms.Resize(size=(width, height)),  # Resize images to 80x45 pixels
-            transforms.Resize(size=(160, 90)),  # Resize images to 80x45 pixels
+            transforms.Resize(size=(80, 45)),  # Resize images to 80x45 pixels
             #transforms.ToTensor(),  # Convert PIL images to PyTorch tensors
             #transforms.Lambda(lambda x: x / 255.0),
             transforms.Normalize(mean=[0.485, 0.456, 0.406],

@@ -49,8 +49,9 @@ def train(net, trainloader, epochs: int, verbose=False, config=None, valloader=N
             # Handle FedProx loss
             if net._run_mode == "fedprox":
                 proximal_term = 0.0
-                for local_weights, global_weights in zip(net.parameters(), net._global_model):
-                    local_np = local_weights.detach().cpu().numpy()
+                for local_weights, global_weights in zip(net.get_parameters(), net._global_model):
+                    #local_np = local_weights.detach().cpu().numpy()
+                    local_np = local_weights if isinstance(local_weights, np.ndarray) else np.array(local_weights)
                     global_np = global_weights if isinstance(global_weights, np.ndarray) else np.array(global_weights)
                     proximal_term += np.linalg.norm(local_np - global_np) ** 2
                 loss = criterion(outputs, labels) + (config["proximal_mu"] / 2) * proximal_term
@@ -63,6 +64,7 @@ def train(net, trainloader, epochs: int, verbose=False, config=None, valloader=N
                 with torch.no_grad():
                     grads = [p.grad for p in net.parameters() if p.grad is not None]
                     if config.get("gradient") is None:
+                        log(INFO, "No previous gradient, using current gradient as is.")
                         new_grads = grads
                     else:
                         new_grads = [
@@ -70,7 +72,8 @@ def train(net, trainloader, epochs: int, verbose=False, config=None, valloader=N
                             for old, g in zip(config["gradient"], grads)
                         ]
                     for param, g in zip(net.parameters(), new_grads):
-                        param.grad = g.clone().to(param.device)
+                        if param.grad is not None:
+                            param.grad = g.clone().to(param.device)
 
             optimizer.step()
 
@@ -250,8 +253,10 @@ def init_client():
         help="Number of output classes. Gets from configfile. If not defined there, defaults to 4.",
     )
     parser.add_argument(
-        '--not_model_checkpoint', help="Don't use model checkpoint. Start training from scratch",
-        action='store_true'
+        '--model_checkpoint',
+        type=bool,
+        default=config.get("model_checkpoint", False),
+        help="Whether to use model checkpoint (True/False)."
     )
     args = parser.parse_args()
     return args
@@ -260,11 +265,13 @@ if __name__ == "__main__":
     args = init_client()
     NUM_CLIENTS = args.start_clients
     BATCH_SIZE = args.batch_size
+    run_data_dict = vars(args).copy()
     wandb.init(
     project=f"federated-learning-{args.strategy}-{args.start_clients}", # project name
     group="experiment-2",          # same as server
     job_type="client",             # marks this as a client run
-    name=f"client-{args.num}"
+    name=f"client-{args.num}",
+    config=run_data_dict
     )
 
     if args.num > NUM_CLIENTS:
@@ -281,7 +288,7 @@ if __name__ == "__main__":
     trainloader, valloader = flwr_data.load_nu(args.batch_size, args.num, args.start_clients+1, width=args.input_image_width, height=args.input_image_height)
     net_class = getattr(flwr_models, args.classifier)
     #net = net_class(DEVICE, checkpoint=not args.not_model_checkpoint, input_shape=(3, args.input_image_height, args.input_image_width), num_classes=args.num_classes)
-    net = net_class(DEVICE, checkpoint=args.not_model_checkpoint, input_shape=(3, args.input_image_height, args.input_image_width), num_classes=args.num_classes)
+    net = net_class(DEVICE, checkpoint=args.model_checkpoint, input_shape=(3, args.input_image_height, args.input_image_width), num_classes=args.num_classes)
 
     if args.noise:
         flwr_client = DummyClient(net, trainloader, valloader, args.epochs, args.learning_rate).to_client()        

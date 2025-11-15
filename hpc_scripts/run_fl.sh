@@ -26,7 +26,7 @@ mkdir -p $LOGDIR
 # Start server
 # ------------------------------
 echo "Starting server..."
-singularity exec --bind $LOGDIR:/app/logs --bind $CONFIG:/app/config.yaml $IMAGE_SERVER nohup python /app/server.py > $LOGDIR/server.out 2>&1 & echo $! > $LOGDIR/server.pid
+singularity exec --nv --bind $LOGDIR:/app/logs --bind $CONFIG:/app/config.yaml $IMAGE_SERVER nohup python /app/server.py > $LOGDIR/server.out 2>&1 & echo $! > $LOGDIR/server.pid
 
 # Give server time to start
 sleep 15
@@ -36,7 +36,7 @@ sleep 15
 # ------------------------------
 for i in $(seq 1 2); do
   echo "Starting client $i..."
-  singularity exec --bind $LOGDIR:/app/logs --bind $CONFIG:/app/config.yaml $IMAGE_CLIENT nohup python /app/client.py --num=$i > $LOGDIR/client${i}.out 2>&1 & echo $! > $LOGDIR/client${i}.pid
+  singularity exec --nv --bind $LOGDIR:/app/logs --bind $CONFIG:/app/config.yaml $IMAGE_CLIENT nohup python /app/client.py --num=$i > $LOGDIR/client${i}.out 2>&1 & echo $! > $LOGDIR/client${i}.pid
 done
 
 wait

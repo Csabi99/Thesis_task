@@ -13,7 +13,7 @@ import wandb
 import openml
 import json
 import os
-from models import TransferClassifier, LightweightClassifier
+from models import TransferClassifier, LightweightClassifier, TinyClassifier
 import load_data as flwr_data
 
 def init_config(path: Optional[str] = '/app/config.yaml') -> argparse.Namespace:
@@ -140,7 +140,7 @@ def lightweight_evaluate(
     DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     net = LightweightClassifier(DEVICE)
     trainloader, valloader = flwr_data.load_nu(32, 0, args.start_clients+1)
-    net.set_head_parameters(parameters)  # Update model with the latest parameters
+    net.set_parameters(parameters)  # Update model with the latest parameters
     loss, accuracy = test(net, valloader)
     fname = "/app/logs/global_accuracy.txt"
     load_model = True
@@ -159,6 +159,35 @@ def lightweight_evaluate(
         "accuracy": accuracy
     })
     return loss, {"accuracy": accuracy}
+
+def tiny_evaluate(
+    server_round: int,
+    parameters,
+    config):
+    DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    net = TinyClassifier(DEVICE)
+    trainloader, valloader = flwr_data.load_nu(32, 0, args.start_clients+1)
+    net.set_parameters(parameters)  # Update model with the latest parameters
+    loss, accuracy = test(net, valloader)
+    fname = "/app/logs/global_accuracy.txt"
+    load_model = True
+    if os.path.isfile(fname):
+        with open(fname, "r") as f:
+            global_accuracy = f.read().strip()
+            if float(global_accuracy) >= accuracy:
+                load_model = False
+    if load_model:                
+        model_path = "/app/logs/global_tiny_model.pt"
+        torch.save(net.state_dict(), model_path)    
+        with open(fname, "w") as f:
+            f.write(str(accuracy))
+    print(f"Server-side evaluation loss {loss} / accuracy {accuracy}")
+    wandb.log({
+        "round": server_round,
+        "loss": loss,
+        "accuracy": accuracy
+    })
+    return loss, {"accuracy": accuracy}
  
 
 
@@ -169,16 +198,15 @@ if __name__ == "__main__":
     start_time = datetime.datetime.now()
     fl.common.logger.configure(identifier=f"FlowerServer", filename=f"/app/logs/log_server_{args.strategy}.txt")
     log(INFO, f"{start_time}: Server script started with {args.start_clients} clients")
-    wandb.init(project="federated-learning", group="experiment-2", job_type="server", config={
-        "clients_num": args.start_clients,
-        "rounds": args.number_of_rounds,
-        "strategy": args.strategy,
-    })    
+    run_data_dict = vars(args).copy()
+    wandb.init(project="federated-learning", group="experiment-2", job_type="server", config=run_data_dict)    
     strategy_class = getattr(flwr_strategies, args.strategy)
     if args.classifier == "TransferClassifier":
         evaluate_fn = transfer_evaluate
     elif args.classifier == "LightweightClassifier":
         evaluate_fn = lightweight_evaluate
+    elif args.classifier == "TinyClassifier":
+        evaluate_fn = tiny_evaluate
     else:
         raise ValueError(f"Unknown classifier: {args.classifier}")
     # strategy_class = patch_strategy(strategy_class) # TODO - do we need patching? probably not for evaluation, but for saving model, maybe yes?

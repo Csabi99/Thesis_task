@@ -21,4 +21,6 @@ COPY ./nu /app/data
 COPY ./client.py /app/client.py
 COPY ./server.py /app/server.py
 COPY ./strategies.py /app/strategies.py
+COPY ./models.py /app/models.py
+COPY ./load_data.py /app/load_data.py
 COPY ./models /app/models

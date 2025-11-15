@@ -45,7 +45,7 @@ SERVER_NODE=${NODELIST[0]}
 NODECOUNT=${#NODELIST[@]}
 
 echo "Starting server on $SERVER_NODE"
-ssh $SERVER_NODE "module load singularity && nohup singularity exec --bind $LOGDIR:/app/logs --bind $CONFIG:/app/config.yaml $IMAGE_SERVER python /app/server.py > $LOGDIR/server.out 2>&1 & disown; echo \$! > $LOGDIR/server.pid" < /dev/null > /dev/null 2>&1 &
+ssh $SERVER_NODE "module load singularity && nohup singularity exec --nv --bind $LOGDIR:/app/logs --bind $CONFIG:/app/config.yaml $IMAGE_SERVER python /app/server.py > $LOGDIR/server.out 2>&1 & disown; echo \$! > $LOGDIR/server.pid" < /dev/null > /dev/null 2>&1 &
 
 # Give server time to start
 sleep 15
@@ -64,7 +64,7 @@ for NODE in "${NODELIST[@]}"; do
     if [ $i -gt $TOTAL_CLIENTS ]; then
       break
     fi
-    ssh $NODE "module load singularity && nohup singularity exec --bind $LOGDIR:/app/logs --bind $CONFIG:/app/config.yaml $IMAGE_CLIENT python /app/client.py --num=$i --server_address=$SERVER_ADDRESS > $LOGDIR/client${i}.out 2>&1 & disown" < /dev/null &
+    ssh $NODE "module load singularity && nohup singularity exec --nv --bind $LOGDIR:/app/logs --bind $CONFIG:/app/config.yaml $IMAGE_CLIENT python /app/client.py --num=$i --server_address=$SERVER_ADDRESS > $LOGDIR/client${i}.out 2>&1 & disown" < /dev/null &
     echo "Client $i started on node $NODE"
     i=$((i+1))
   done
