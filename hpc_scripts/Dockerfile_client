@@ -1,6 +1,5 @@
 # Use an official Python runtime as a parent image
-FROM python:3.10-slim-bullseye
-
+FROM pytorch/pytorch:2.3.0-cuda12.1-cudnn8-runtime
 # Set the working directory in the container to /app
 WORKDIR /app
 
@@ -23,7 +22,8 @@ COPY ./models /app/models
 
 # Create an entrypoint script
 COPY ./entrypoint.sh /app/entrypoint.sh
-COPY ./nu /app/data
+COPY ./nu/labels.csv /app/data/
+COPY ./nu_cache/ /app/cache/
 # Copy your client script into the container
 COPY ./client.py /app/client.py
 COPY ./models.py /app/models.py

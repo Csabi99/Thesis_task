@@ -1,2 +1,4 @@
 #ignore everything in client_num_configs directory
 client_num_configs/*
+hpc_scripts/passwd
+hpc_scripts/group

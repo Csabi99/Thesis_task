@@ -86,7 +86,7 @@ class TinyClassifier(nn.Module):
             nn.Dropout(0.5),
             nn.Linear(128, num_classes)
         )
-        self._dev = dev
+        self._dev = torch.device(dev)
         self._global_model = None
         self._run_mode = None        
         if checkpoint:
@@ -95,9 +95,11 @@ class TinyClassifier(nn.Module):
             state_dict = torch.load(model_path, map_location="cpu")
             self.load_state_dict(state_dict)
         else:
-            log(INFO, f"TinyClassifier from scratch")               
+            log(INFO, f"TinyClassifier from scratch")       
+        self.to(self._dev)        
 
     def forward(self, x):
+        x = x.to(self._dev)
         x = self.features(x)
         x = x.view(x.size(0), -1)
         return self.classifier(x)
@@ -110,12 +112,15 @@ class TinyClassifier(nn.Module):
     def set_parameters(self, parameters: List[np.ndarray]):
         """Load model weights from numpy arrays (from Flower server)."""
         params_dict = zip(self.state_dict().keys(), parameters)
-        state_dict = OrderedDict({k: torch.tensor(v) for k, v in params_dict})
+        state_dict = OrderedDict(
+            {k: torch.tensor(v, device=self._dev) for k, v in params_dict}
+        )
         self.load_state_dict(state_dict, strict=True)
+
 
     def get_parameters(self) -> List[np.ndarray]:
         """Return model weights as a list of numpy arrays."""
-        return [val.cpu().numpy() for _, val in self.state_dict().items()]
+        return [v.detach().cpu().numpy() for _, v in self.state_dict().items()]
 
 
 

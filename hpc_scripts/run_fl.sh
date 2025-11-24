@@ -2,14 +2,16 @@
 #SBATCH --job-name=fl_test
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
-#SBATCH --cpus-per-task=64
-#SBATCH --mem=128G
-#SBATCH --gres=gpu:1
-#SBATCH --time=03:00:00
-#SBATCH --partition=gpu
+#SBATCH --cpus-per-task=128
+#SBATCH --mem=228G
+
+#SBATCH --time=10:00:00
+#SBATCH --partition=cpu
 #SBATCH --account=pr_fedlearn
 #SBATCH --output=/project/pr_fedlearn/logs/slurm-%j.out
 #SBATCH --error=/project/pr_fedlearn/logs/slurm-%j.err
+
+#--cpus-per-task=64 --gres=gpu:1
 
 # ------------------------------
 # Setup
@@ -26,19 +28,21 @@ mkdir -p $LOGDIR
 # Start server
 # ------------------------------
 echo "Starting server..."
-singularity exec --nv --bind $LOGDIR:/app/logs --bind $CONFIG:/app/config.yaml $IMAGE_SERVER nohup python /app/server.py > $LOGDIR/server.out 2>&1 & echo $! > $LOGDIR/server.pid
-
+singularity exec --bind $LOGDIR:/app/logs --bind $CONFIG:/app/config.yaml $IMAGE_SERVER nohup /opt/conda/bin/python /app/server.py > $LOGDIR/server.out 2>&1 & echo $! > $LOGDIR/server.pid
+# --nv
 # Give server time to start
 sleep 15
+HOSTIP=$(hostname -I | awk '{print $1}')
+
 
 # ------------------------------
-# Start 2 clients
+# Start 64 clients
 # ------------------------------
-for i in $(seq 1 2); do
+for i in $(seq 1 64); do
   echo "Starting client $i..."
-  singularity exec --nv --bind $LOGDIR:/app/logs --bind $CONFIG:/app/config.yaml $IMAGE_CLIENT nohup python /app/client.py --num=$i > $LOGDIR/client${i}.out 2>&1 & echo $! > $LOGDIR/client${i}.pid
+  singularity exec --bind $LOGDIR:/app/logs --bind $CONFIG:/app/config.yaml $IMAGE_CLIENT nohup /opt/conda/bin/python /app/client.py --num=$i --server_address $HOSTIP:8080 > $LOGDIR/client${i}.out 2>&1 & echo $! > $LOGDIR/client${i}.pid
 done
-
+# --nv
 wait
 echo "Server and clients ran."
 

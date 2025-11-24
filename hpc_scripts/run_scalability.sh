@@ -1,10 +1,10 @@
 #!/bin/bash
 #SBATCH --job-name=federated-learning-scalability-test
-#SBATCH --nodes=3                  # number of nodes to use
+#SBATCH --nodes=16                  # number of nodes to use
 #SBATCH --ntasks-per-node=1
 #SBATCH --cpus-per-task=128
-#SBATCH --mem=256G
-#SBATCH --time=05:00:00
+#SBATCH --mem=228G
+#SBATCH --time=08:00:00
 #SBATCH --partition=cpu
 #SBATCH --account=pr_fedlearn
 #SBATCH --output=/project/pr_fedlearn/logs/slurm-%j.out
@@ -22,17 +22,17 @@ CONFIG=${CONFIG:-/project/pr_fedlearn/config/config.yaml}
 cd /project/pr_fedlearn/
 module load singularity
 
-export SINGULARITY_TMPDIR=/project/pr_fedlearn/singularity_tmp
-export SINGULARITY_CACHEDIR=/project/pr_fedlearn/cache
-mkdir -p $SINGULARITY_TMPDIR $SINGULARITY_CACHEDIR
+# export SINGULARITY_TMPDIR=/project/pr_fedlearn/singularity_tmp
+# export SINGULARITY_CACHEDIR=/project/pr_fedlearn/cache
+# mkdir -p $SINGULARITY_TMPDIR $SINGULARITY_CACHEDIR
 
 DOCKER_IMAGE_SERVER="ccsaba99/hpc-server-image"
-IMAGE_SERVER="/project/pr_fedlearn/hpc-server-image.sif"
-[ ! -f "$IMAGE_SERVER" ] && singularity pull "$IMAGE_SERVER" "docker://$DOCKER_IMAGE_SERVER"
+# IMAGE_SERVER="/project/pr_fedlearn/hpc-server-image.sif"
+# [ ! -f "$IMAGE_SERVER" ] && singularity pull "$IMAGE_SERVER" "docker://$DOCKER_IMAGE_SERVER"
 
 DOCKER_IMAGE_CLIENT="ccsaba99/hpc-client-image"
-IMAGE_CLIENT="/project/pr_fedlearn/hpc-client-image.sif"
-[ ! -f "$IMAGE_CLIENT" ] && singularity pull "$IMAGE_CLIENT" "docker://$DOCKER_IMAGE_CLIENT"
+# IMAGE_CLIENT="/project/pr_fedlearn/hpc-client-image.sif"
+# [ ! -f "$IMAGE_CLIENT" ] && singularity pull "$IMAGE_CLIENT" "docker://$DOCKER_IMAGE_CLIENT"
 
 LOGDIR="/project/pr_fedlearn/logs"
 mkdir -p $LOGDIR
@@ -45,7 +45,7 @@ SERVER_NODE=${NODELIST[0]}
 NODECOUNT=${#NODELIST[@]}
 
 echo "Starting server on $SERVER_NODE"
-ssh $SERVER_NODE "module load singularity && nohup singularity exec --nv --bind $LOGDIR:/app/logs --bind $CONFIG:/app/config.yaml $IMAGE_SERVER python /app/server.py > $LOGDIR/server.out 2>&1 & disown; echo \$! > $LOGDIR/server.pid" < /dev/null > /dev/null 2>&1 &
+ssh $SERVER_NODE "module load singularity && nohup singularity exec --bind $LOGDIR:/app/logs --bind $CONFIG:/app/config.yaml $IMAGE_SERVER python /app/server.py > $LOGDIR/server.out 2>&1 & disown; echo \$! > $LOGDIR/server.pid" < /dev/null > /dev/null 2>&1 &
 
 # Give server time to start
 sleep 15
@@ -64,7 +64,7 @@ for NODE in "${NODELIST[@]}"; do
     if [ $i -gt $TOTAL_CLIENTS ]; then
       break
     fi
-    ssh $NODE "module load singularity && nohup singularity exec --nv --bind $LOGDIR:/app/logs --bind $CONFIG:/app/config.yaml $IMAGE_CLIENT python /app/client.py --num=$i --server_address=$SERVER_ADDRESS > $LOGDIR/client${i}.out 2>&1 & disown" < /dev/null &
+    ssh $NODE "module load singularity && nohup singularity exec --bind $LOGDIR:/app/logs --bind $CONFIG:/app/config.yaml $IMAGE_CLIENT python /app/client.py --num=$i --server_address=$SERVER_ADDRESS > $LOGDIR/client${i}.out 2>&1 & disown" < /dev/null &
     echo "Client $i started on node $NODE"
     i=$((i+1))
   done

@@ -16,7 +16,8 @@ RUN apt-get update && apt-get install -y \
 # Install any needed packages specified in requirements.txt
 RUN pip install -r requirements.txt
 
-COPY ./nu /app/data
+COPY ./nu/labels.csv /app/data/
+COPY ./nu_cache/ /app/cache/
 # Copy your server script into the container
 COPY ./client.py /app/client.py
 COPY ./server.py /app/server.py

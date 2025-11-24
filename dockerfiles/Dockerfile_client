@@ -23,7 +23,8 @@ COPY ./models /app/models
 
 # Create an entrypoint script
 COPY ./entrypoint.sh /app/entrypoint.sh
-COPY ./nu /app/data
+COPY ./nu/labels.csv /app/data/
+COPY ./nu_cache/ /app/cache/
 # Copy your client script into the container
 COPY ./client.py /app/client.py
 COPY ./models.py /app/models.py

@@ -26,7 +26,21 @@ import load_data as flwr_data
 
 def train(net, trainloader, epochs: int, verbose=False, config=None, valloader=None):
     """Train the network on the training set with optional LR scheduling."""
-    optimizer = torch.optim.Adam(net.parameters())
+    use_fedcm = net._run_mode == "fedcm"
+    if not use_fedcm:
+        optimizer = torch.optim.Adam(net.parameters())
+        eta_l = optimizer.param_groups[0]['lr']
+
+    # Extract FedCM params
+    if use_fedcm:
+        eta_l = config["learning_rate"]          # η_l (local LR)
+        alpha = config["decay_alfa"]         # α
+        if config.get("gradient") is None:
+            # If first round, Δ_t = 0 for all parameters
+            delta_t = {name: torch.zeros_like(p) for name, p in net.named_parameters()}
+            alpha = 1.0  # only use local gradient
+        else:
+             delta_t = {named_param[0]: g for named_param, g in zip(net.state_dict().items(), config["gradient"])}                   
     # optimizer = torch.optim.Adam(net.parameters(), lr=config.get("learning_rate", 1e-3))
     # scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
     #     optimizer,
@@ -40,10 +54,14 @@ def train(net, trainloader, epochs: int, verbose=False, config=None, valloader=N
 
     for epoch in range(epochs):
         correct, total, epoch_loss = 0, 0, 0.0
-
+        diag = []
+        to_print = True
         for images, labels in trainloader:
             images, labels = images.to(net._dev), labels.to(net._dev)
-            optimizer.zero_grad()
+            if use_fedcm:
+                net.zero_grad()
+            else:
+                optimizer.zero_grad()
             outputs = net(images)
 
             # Handle FedProx loss
@@ -60,22 +78,47 @@ def train(net, trainloader, epochs: int, verbose=False, config=None, valloader=N
 
             loss.backward()
 
-            if net._run_mode == "fedcm":
+            if use_fedcm:
                 with torch.no_grad():
-                    grads = [p.grad for p in net.parameters() if p.grad is not None]
-                    if config.get("gradient") is None:
-                        log(INFO, "No previous gradient, using current gradient as is.")
-                        new_grads = grads
-                    else:
-                        new_grads = [
-                            config["decay_alfa"] * g + (1 - config["decay_alfa"]) * old
-                            for old, g in zip(config["gradient"], grads)
-                        ]
-                    for param, g in zip(net.parameters(), new_grads):
-                        if param.grad is not None:
-                            param.grad = g.clone().to(param.device)
+                    for (name, param) in net.named_parameters():
+                        if param.grad is None:
+                            continue
+                        g = param.grad                     # local gradient g_{i,k}
+                        d_t = delta_t[name]
+                        if not isinstance(d_t, torch.Tensor):
+                            d_t = torch.tensor(d_t, dtype=g.dtype, device=param.device)
+                        else:
+                            d_t = d_t.to(param.device).to(g.dtype)
 
-            optimizer.step()
+                        # FedCM mixed direction: v = α*g + (1−α)*Δ_t
+                        v = alpha * g + (1 - alpha) * d_t
+
+                        # Update: x = x − η_l * v    (Algorithm 2, line 9)
+                        param.data -= eta_l * v
+                        if len(diag) < 15:
+                            diag.append((name, g.norm().item(), d_t.norm().item(), v.norm().item()))                        
+                # with torch.no_grad():
+                #     if config.get("gradient") is None:
+                #         log(INFO, "No previous gradient, using current gradient as is.")
+                #         new_grads = [p.grad for p in net.parameters() if p.grad is not None]
+                #     else:
+                #         grads = {name: p.grad for name, p in net.named_parameters() if p.grad is not None}
+                #         global_grads = {named_param[0]: g for named_param, g in zip(net.state_dict().items(), config["gradient"])}
+                #         new_grads = []
+                #         for name in grads.keys():
+                #             g = grads[name]
+                #             global_g = global_grads[name]
+                #             adjusted_g = config["decay_alfa"] * g + (1 - config["decay_alfa"]) * global_g
+                #             new_grads.append(adjusted_g)
+                #     for param, g in zip(net.parameters(), new_grads):
+                #         if param.grad is not None:
+                #             param.grad = g.clone().to(param.device)
+                if len(diag) > 13 and to_print:
+                    for name, gn, dn, vn in diag:
+                        log(INFO, f"[FedCM DEBUG] {name} ||g||={gn:.6e} ||Δ_t||={dn:.6e} ||v||={vn:.6e}")
+                    to_print = False
+            else:
+                optimizer.step()
 
             # Metrics
             epoch_loss += loss.item()
@@ -106,7 +149,7 @@ def train(net, trainloader, epochs: int, verbose=False, config=None, valloader=N
         #else:
             #scheduler.step(epoch_loss)
 
-        log(INFO, f"Epoch {epoch+1}: train loss {epoch_loss:.4f}, acc {epoch_acc:.3f}, lr {optimizer.param_groups[0]['lr']:.6f}")
+        log(INFO, f"Epoch {epoch+1}: train loss {epoch_loss:.4f}, acc {epoch_acc:.3f}, lr {eta_l:.6f}")
         if valloader is not None:
             log(INFO, f"           val loss {val_loss:.4f}, acc {accuracy:.3f}")
 
@@ -115,7 +158,7 @@ def train(net, trainloader, epochs: int, verbose=False, config=None, valloader=N
                 "epoch": epoch + 1,
                 "train_loss": epoch_loss,
                 "train_acc": epoch_acc,
-                "lr": optimizer.param_groups[0]['lr']
+                "lr": eta_l
             })
 
 

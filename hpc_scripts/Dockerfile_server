@@ -1,5 +1,5 @@
 # Use an official Python runtime as a parent image
-FROM python:3.10-slim-bullseye
+FROM pytorch/pytorch:2.3.0-cuda12.1-cudnn8-runtime
 
 # Set the working directory in the container to /app
 WORKDIR /app
@@ -16,7 +16,8 @@ RUN apt-get update && apt-get install -y \
 # Install any needed packages specified in requirements.txt
 RUN pip install -r requirements.txt
 
-COPY ./nu /app/data
+COPY ./nu/labels.csv /app/data/
+COPY ./nu_cache/ /app/cache/
 # Copy your server script into the container
 COPY ./client.py /app/client.py
 COPY ./server.py /app/server.py

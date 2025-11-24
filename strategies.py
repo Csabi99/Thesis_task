@@ -274,59 +274,51 @@ class FedCM(FedAvg):
         return [(client, fit_ins) for client in clients]    
         
 
-def aggregate_fit(self, server_round, results, failures):
-    if not results:
-        return None, {}
-    # Do not aggregate if there are failures and failures are not accepted
-    if not self.accept_failures and failures:
-        return None, {}
-
-    if self.current_weights is None:
-        if self.initial_parameters is not None:
-            self.current_weights = self.initial_parameters
-        else:
-            log(ERROR, "No initial weights. Can't proceed. Exiting...")
+    def aggregate_fit(self, server_round, results, failures):
+        if not results:
+            return None, {}
+        # Do not aggregate if there are failures and failures are not accepted
+        if not self.accept_failures and failures:
             return None, {}
 
-    current_weights = parameters_to_ndarrays(self.current_weights)
+        if self.current_weights is None:
+            if self.initial_parameters is not None:
+                self.current_weights = self.initial_parameters
+            else:
+                log(ERROR, "No initial weights. Can't proceed. Exiting...")
+                return None, {}
 
-    # Get client deltas: Δ_i = x_i,K - x_t
-    deltas = []
-    for _, fit_res in results:
-        client_weights = parameters_to_ndarrays(fit_res.parameters)
-        delta = [cw - gw for cw, gw in zip(client_weights, current_weights)]
-        deltas.append(delta)
+        current_weights = parameters_to_ndarrays(self.current_weights)
+        # Get client deltas: Δ_i = x_i,K - x_t
+        deltas = []
+        for _, fit_res in results:
+            client_weights = parameters_to_ndarrays(fit_res.parameters)
+            delta = [cw - gw for cw, gw in zip(client_weights, current_weights)]
+            deltas.append(delta)
 
-    # Average client updates
-    num_clients = len(deltas)
-    sum_delta = [
-        sum(d[i] for d in deltas)
-        for i in range(len(deltas[0]))
-    ]
+        # Average client updates
+        num_clients = len(deltas)
+        sum_delta = [sum(d[i] for d in deltas)for i in range(len(deltas[0]))]
+        # Correct scaling
+        scale = -1.0 / (self.eta_l * self.epoch_l * num_clients)
 
-    # Correct scaling
-    scale = -1.0 / (self.eta_l * self.epoch_l * num_clients)
+        # Now apply scale
+        delta_t_plus_1 = [scale * d for d in sum_delta]
 
-    # Now apply scale
-    delta_t_plus_1 = [scale * d for d in sum_delta]
+        # # Update Δ_t with controlled momentum
+        # if self.delta_t is None:
+        #     self.delta_t = [np.zeros_like(d) for d in scaled_delta]
 
-    # # Update Δ_t with controlled momentum
-    # if self.delta_t is None:
-    #     self.delta_t = [np.zeros_like(d) for d in scaled_delta]
+        # self.delta_t = [
+        #     self.alpha * old + (1 - self.alpha) * new
+        #     for old, new in zip(self.delta_t, scaled_delta)
+        # ]
 
-    # self.delta_t = [
-    #     self.alpha * old + (1 - self.alpha) * new
-    #     for old, new in zip(self.delta_t, scaled_delta)
-    # ]
-
-    # Update global weights: x_{t+1} = x_t - η_g * Δ_{t+1}
-    new_weights = [
-        w - self.eta * d
-        for w, d in zip(current_weights, delta_t_plus_1)
-    ]
-
-    self.current_weights = ndarrays_to_parameters(new_weights)
-    return self.current_weights, {}
+        # Update global weights: x_{t+1} = x_t - η_g * Δ_{t+1}
+        new_weights = [w - self.eta * d for w, d in zip(current_weights, delta_t_plus_1)]
+        self.delta_t = delta_t_plus_1
+        self.current_weights = ndarrays_to_parameters(new_weights)
+        return self.current_weights, {}
 
 
 #TODO (here based on fedadam but can use fedavgm as well)
