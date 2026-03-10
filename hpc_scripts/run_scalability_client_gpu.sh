@@ -1,11 +1,12 @@
 #!/bin/bash
 #SBATCH --job-name=fedlearn-clients
-#SBATCH --array=1-1000
+#SBATCH --array=1-32
 #SBATCH --cpus-per-task=1
 #SBATCH --mem=2G
-#SBATCH --partition=cpu
-#SBATCH --time=20:00:00
+#SBATCH --partition=gpu
+#SBATCH --time=4:00:00
 #SBATCH --exclude=x1000c1s5b0n1
+#SBATCH --gres=gpu:1
 #SBATCH --output=/project/nr_fedlearn/logs/slurm-%j.out
 #SBATCH --error=/project/nr_fedlearn/logs/slurm-%j.err
 # export WANDB_API_KEY=
@@ -32,7 +33,7 @@ SERVER_ADDRESS="${SERVER_NODE}:8080"
 CLIENT_ID=$SLURM_ARRAY_TASK_ID
 max_tries=5
 for i in $(seq 1 $max_tries); do
-    singularity exec   --bind /project/nr_fedlearn/passwd:/etc/passwd:ro --bind /project/nr_fedlearn/group:/etc/group:ro --bind $LOGDIR:/app/logs --bind $CONFIG:/app/config.yaml --bind /project/nr_fedlearn/global_tiny_model.pt:/app/models/global_tiny_model.pt $IMAGE_CLIENT /opt/conda/bin/python /app/client.py --num=$CLIENT_ID --server_address=$SERVER_ADDRESS > $LOGDIR/client${CLIENT_ID}.out 2>&1 && break
+    singularity exec --nv --bind /project/nr_fedlearn/passwd:/etc/passwd:ro --bind /project/nr_fedlearn/group:/etc/group:ro --bind $LOGDIR:/app/logs --bind $CONFIG:/app/config.yaml $IMAGE_CLIENT /opt/conda/bin/python /app/client.py --num=$CLIENT_ID --server_address=$SERVER_ADDRESS > $LOGDIR/client${CLIENT_ID}.out 2>&1 && break
     echo "Retry $i on host $(hostname)" >> retry.log
     sleep 5
 done

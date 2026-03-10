@@ -1,4 +1,4 @@
-from models import TransferClassifier, LightweightClassifier
+from models import TransferClassifier, LightweightClassifier, TinyClassifier
 from load_data import load_nu, load_cifar10 as load_cifar
 from client import FlowerClient
 import torch
@@ -16,9 +16,11 @@ if __name__ == "__main__":
     num = 1
     epochs = 300
     batch_size = 32
-    DEVICE = torch.device("cpu")
+    if torch.cuda.is_available():
+        log(INFO, "CUDA is available. Using GPU.")
+    DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     trainloader, valloader = load_nu(batch_size, num, 32, federated=False)
-    net = TransferClassifier(DEVICE, input_shape=(3, 80, 45), num_classes=4, freeze_backbone=True)
+    net = TinyClassifier(DEVICE, input_shape=(3, 80, 45), num_classes=4)
     #net = LightweightClassifier(DEVICE, input_shape=(3, 120, 120), output_dim=4)
     client = FlowerClient(net, trainloader, valloader, epochs, 0.001, False)
     losses = []

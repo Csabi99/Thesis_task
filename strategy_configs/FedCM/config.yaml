@@ -1,18 +1,19 @@
 server: "server:8080"
-rounds: 10
-start_clients: 2
-min_clients: 2
-available_clients: 2
+rounds: 50
+start_clients: 32
+min_clients: 32
+available_clients: 32
 fraction_fit: 1.0
 batch_size: 32
-learning_rate: 0.001
-epochs: 2
+learning_rate: 0.1
+epochs: 1
 docker: true
 working_dir: "/home/ubuntu/data/carla"
 strategy: 
   name: "FedCM"
   params:
-    eta: 0.001
-    eta_l: 0.001
-    epoch_l: 3
+    eta: 0.00001
+    eta_l: 0.005
+    epoch_l: 1
     decay_alfa: 0.9
+classifier: "TinyClassifier"

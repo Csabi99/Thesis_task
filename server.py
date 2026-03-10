@@ -3,6 +3,7 @@ import flwr as fl
 from logging import ERROR, INFO
 import yaml
 from flwr.common.logger import log
+from flwr.common import ndarrays_to_parameters
 import datetime
 from typing import Callable, Tuple, Dict, Optional
 from client import test
@@ -201,16 +202,22 @@ if __name__ == "__main__":
     run_data_dict = vars(args).copy()
     wandb.init(project="federated-learning", group="experiment-2", job_type="server", config=run_data_dict)    
     strategy_class = getattr(flwr_strategies, args.strategy)
+    initial_parameters = None
     if args.classifier == "TransferClassifier":
         evaluate_fn = transfer_evaluate
+        net = TransferClassifier(torch.device("cuda" if torch.cuda.is_available() else "cpu"), checkpoint=False)
+        initial_parameters = net.get_parameters()
     elif args.classifier == "LightweightClassifier":
         evaluate_fn = lightweight_evaluate
+        net = LightweightClassifier(torch.device("cuda" if torch.cuda.is_available() else "cpu"), checkpoint=False)
+        initial_parameters = net.get_parameters()
     elif args.classifier == "TinyClassifier":
         evaluate_fn = tiny_evaluate
+        net = TinyClassifier(torch.device("cuda" if torch.cuda.is_available() else "cpu"), checkpoint=False)
+        initial_parameters = net.get_parameters()        
     else:
         raise ValueError(f"Unknown classifier: {args.classifier}")
-    # strategy_class = patch_strategy(strategy_class) # TODO - do we need patching? probably not for evaluation, but for saving model, maybe yes?
-    strategy_instance = strategy_class(min_fit_clients=args.min_clients, min_available_clients=args.available_clients, fraction_fit=args.fraction_fit, evaluate_fn=evaluate_fn, **args.strategy_config)
+    strategy_instance = strategy_class(min_fit_clients=args.min_clients, min_available_clients=args.available_clients, fraction_fit=args.fraction_fit, evaluate_fn=evaluate_fn, initial_parameters=ndarrays_to_parameters(initial_parameters), **args.strategy_config)
     log(INFO, f"Using strategy: {args.strategy}")
     log(INFO, f"Strategy parameters: {args.strategy_config}")
     start_fl_server(strategy=strategy_instance, rounds=args.number_of_rounds)

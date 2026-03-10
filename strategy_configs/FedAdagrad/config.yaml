@@ -1,17 +1,18 @@
 server: "server:8080"
-rounds: 100
-start_clients: 2
-min_clients: 2
-available_clients: 2
+rounds: 10
+start_clients: 32
+min_clients: 32
+available_clients: 32
 fraction_fit: 1.0
 batch_size: 32
-learning_rate: 0.0005
-epochs: 2
+learning_rate: 0.01
+epochs: 5
 docker: true
 working_dir: "/home/ubuntu/data/carla"
 strategy: 
-  name: "FedAdagradDefault"
+  name: "FedAdagrad"
   params:
-    eta: 0.1
-    eta_l: 0.1
+    eta: 0.001
+    eta_l: 0.01
     tau: 0.00000001
+classifier: "TinyClassifier"

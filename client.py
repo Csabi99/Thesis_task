@@ -54,8 +54,6 @@ def train(net, trainloader, epochs: int, verbose=False, config=None, valloader=N
 
     for epoch in range(epochs):
         correct, total, epoch_loss = 0, 0, 0.0
-        diag = []
-        to_print = True
         for images, labels in trainloader:
             images, labels = images.to(net._dev), labels.to(net._dev)
             if use_fedcm:
@@ -94,29 +92,7 @@ def train(net, trainloader, epochs: int, verbose=False, config=None, valloader=N
                         v = alpha * g + (1 - alpha) * d_t
 
                         # Update: x = x − η_l * v    (Algorithm 2, line 9)
-                        param.data -= eta_l * v
-                        if len(diag) < 15:
-                            diag.append((name, g.norm().item(), d_t.norm().item(), v.norm().item()))                        
-                # with torch.no_grad():
-                #     if config.get("gradient") is None:
-                #         log(INFO, "No previous gradient, using current gradient as is.")
-                #         new_grads = [p.grad for p in net.parameters() if p.grad is not None]
-                #     else:
-                #         grads = {name: p.grad for name, p in net.named_parameters() if p.grad is not None}
-                #         global_grads = {named_param[0]: g for named_param, g in zip(net.state_dict().items(), config["gradient"])}
-                #         new_grads = []
-                #         for name in grads.keys():
-                #             g = grads[name]
-                #             global_g = global_grads[name]
-                #             adjusted_g = config["decay_alfa"] * g + (1 - config["decay_alfa"]) * global_g
-                #             new_grads.append(adjusted_g)
-                #     for param, g in zip(net.parameters(), new_grads):
-                #         if param.grad is not None:
-                #             param.grad = g.clone().to(param.device)
-                if len(diag) > 13 and to_print:
-                    for name, gn, dn, vn in diag:
-                        log(INFO, f"[FedCM DEBUG] {name} ||g||={gn:.6e} ||Δ_t||={dn:.6e} ||v||={vn:.6e}")
-                    to_print = False
+                        param.data -= eta_l * v                    
             else:
                 optimizer.step()
 
